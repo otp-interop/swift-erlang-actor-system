@@ -5,8 +5,12 @@ import Darwin
 @attached(peer)
 public macro StableName(_ name: StaticString) = #externalMacro(module: "DistributedMacros", type: "StableName")
 
-@attached(member, names: arbitrary)
-@attached(extension, conformances: HasStableNames, names: named(stableNames))
+@attached(
+    extension,
+    conformances: HasStableNames,
+    names: named(mangledStableNames), named(stableMangledNames), named(_$), named(RemoteActor)
+)
+@attached(peer, names: prefixed(_RemoteActorFor))
 public macro StableNames() = #externalMacro(module: "DistributedMacros", type: "StableNames")
 
 @attached(body)
@@ -16,6 +20,17 @@ public protocol HasStableNames {
     static var mangledStableNames: [String:String] { get }
     static var stableMangledNames: [String:String] { get }
 }
+
+//public protocol RemoteActorProtocol<ActorSystem>: DistributedActor where ActorSystem == ErlangActorSystem {
+//    associatedtype RemoteActor: DistributedActor where RemoteActor.ActorSystem == Self.ActorSystem
+//    static func _resolve(id: ErlangActorSystem.ActorID, using system: ErlangActorSystem) throws -> any DistributedActor
+//}
+
+//extension RemoteActorProtocol {
+//    static func _resolve(id: ActorSystem.ActorID, using system: ActorSystem) throws -> any DistributedActor {
+//        try _RemoteActorType.resolve(id: id, using: system)
+//    }
+//}
 
 public extension HasStableNames {
     /// Creates a mangled function name for a distributed function.
@@ -276,7 +291,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         }
     }
     
-    public enum ActorID: Hashable, Sendable, CustomDebugStringConvertible {
+    public enum ActorID: Hashable, Sendable, Decodable, CustomDebugStringConvertible {
         case pid(Term.PID)
         case name(String, node: String)
         
@@ -304,6 +319,15 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 """
             case let .name(name, node):
                 return "name(\(name), node: \(node))"
+            }
+        }
+        
+        public init(from decoder: any Decoder) throws {
+            if let pid = try? decoder.singleValueContainer().decode(Term.PID.self) {
+                self = .pid(pid)
+            } else { // {name, node}
+                var container = try decoder.unkeyedContainer()
+                self = try .name(container.decode(String.self), node: container.decode(String.self))
             }
         }
     }

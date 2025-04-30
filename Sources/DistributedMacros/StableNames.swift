@@ -1,12 +1,99 @@
 import SwiftSyntax
 import SwiftSyntaxMacros
+import SwiftDiagnostics
+import SwiftSyntaxMacroExpansion
 
-public struct StableNames: MemberMacro, ExtensionMacro {
+public struct StableNames: ExtensionMacro, PeerMacro {
     public static func expansion(
         of node: AttributeSyntax,
-        providingMembersOf declaration: some DeclGroupSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
+        if let protocolDecl = declaration.as(ProtocolDeclSyntax.self) {
+            let actorName = TokenSyntax.identifier("_RemoteActorFor\(protocolDecl.name.text)")
+            var actorDecl = ActorDeclSyntax(
+                modifiers: [
+                    DeclModifierSyntax(name: .keyword(.public)),
+                    DeclModifierSyntax(name: .keyword(.distributed))
+                ],
+                name: actorName,
+                inheritanceClause: InheritanceClauseSyntax {
+                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: protocolDecl.name))
+                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
+                }
+            ) {
+                // create dummy implementations for all distributed functions
+                for member in protocolDecl.memberBlock.members {
+                    if let functionDecl = member.decl.as(FunctionDeclSyntax.self) {
+                        functionDecl.with(\.body, CodeBlockSyntax {
+                            FunctionCallExprSyntax(callee: DeclReferenceExprSyntax(baseName: .identifier("fatalError")))
+                        })
+                    } else if let variableDecl = member.decl.as(VariableDeclSyntax.self) {
+                        variableDecl.with(\.bindings, PatternBindingListSyntax(variableDecl.bindings.map({
+                            $0.with(\.accessorBlock, AccessorBlockSyntax(accessors: .getter(CodeBlockItemListSyntax {
+                                FunctionCallExprSyntax(callee: DeclReferenceExprSyntax(baseName: .identifier("fatalError")))
+                            })))
+                        })))
+                    }
+                }
+            }
+            
+            actorDecl.memberBlock.members.append(
+                contentsOf: try hasStableNamesMembers(for: actorDecl, in: context)
+                    .map({ MemberBlockItemSyntax(decl: $0) })
+            )
+            
+            return [
+                DeclSyntax(actorDecl)
+            ]
+        } else {
+            return []
+        }
+    }
+    
+    public static func expansion(
+        of node: AttributeSyntax,
+        attachedTo declaration: some DeclGroupSyntax,
+        providingExtensionsOf type: some TypeSyntaxProtocol,
+        conformingTo protocols: [TypeSyntax],
+        in context: some MacroExpansionContext
+    ) throws -> [ExtensionDeclSyntax] {
+        if let protocolDecl = declaration.as(ProtocolDeclSyntax.self) {
+            return [
+                ExtensionDeclSyntax(
+                    extendedType: type
+                ) {
+                    TypeAliasDeclSyntax(
+                        name: .identifier("RemoteActor"),
+                        initializer: TypeInitializerClauseSyntax(
+                            value: type.as(MemberTypeSyntax.self).flatMap({
+                                TypeSyntax($0.with(\.name, .identifier("_RemoteActorFor\(protocolDecl.name.text)")))
+                            }) ?? TypeSyntax(IdentifierTypeSyntax(name: .identifier("_RemoteActorFor\(protocolDecl.name.text)")))
+                        )
+                    )
+                }
+            ]
+        } else {
+            return [
+                try ExtensionDeclSyntax(
+                    extendedType: type,
+                    inheritanceClause: InheritanceClauseSyntax {
+                        InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
+                    }
+                ) {
+                    for decl in try hasStableNamesMembers(for: declaration, in: context) {
+                        decl
+                    }
+                }
+            ]
+        }
+    }
+    
+    static func hasStableNamesMembers(
+        for declaration: some DeclGroupSyntax,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        // collect '@StableName' members
         let stableNamed = declaration.memberBlock.members
             .compactMap({ (member) -> (StableNamed, StringLiteralExprSyntax)? in
                 if let functionDecl = member.decl.as(FunctionDeclSyntax.self) {
@@ -46,7 +133,89 @@ public struct StableNames: MemberMacro, ExtensionMacro {
                 }
             })
         
+        // check for duplicates
+        for (index, (originalDecl, stableName)) in stableNamed.enumerated() {
+            let duplicateNames = stableNamed
+                .enumerated()
+                .filter({
+                    $0.offset > index
+                    && $0.element.1.segments.description == stableName.segments.description
+                })
+            for duplicateName in duplicateNames {
+                context.diagnose(
+                    Diagnostic(
+                        node: duplicateName.element.0.node,
+                        message: MacroExpansionErrorMessage("Duplicate stable name '\(stableName.segments)'"),
+                        notes: [
+                            Note(
+                                node: originalDecl.node,
+                                message: MacroExpansionNoteMessage("previously declared here")
+                            )
+                        ]
+                    )
+                )
+            }
+        }
+        
+        // create structs used for mangling
+        
         let manglingMetatypes = TokenSyntax.identifier("_$")
+        
+        let mangledStableNames = DictionaryExprSyntax {
+            for (stableNamed, stableName) in stableNamed {
+                DictionaryElementSyntax(
+                    key: stableName,
+                    value: FunctionCallExprSyntax(
+                        callee: DeclReferenceExprSyntax(
+                            baseName: .identifier("_mangle")
+                        )
+                    ) {
+                        LabeledExprSyntax(
+                            label: "function",
+                            expression: MemberAccessExprSyntax(
+                                base: MemberAccessExprSyntax(
+                                    base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
+                                    name: .identifier(stableNamed.name.text)
+                                ),
+                                name: .keyword(.self)
+                            )
+                        )
+                        LabeledExprSyntax(
+                            label: "functionContainer",
+                            expression: MemberAccessExprSyntax(
+                                base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
+                                name: .keyword(.self)
+                            )
+                        )
+                        LabeledExprSyntax(
+                            label: "parameters",
+                            expression: stableNamed.parameters(manglingMetatypes: manglingMetatypes)
+                        )
+                        LabeledExprSyntax(
+                            label: "returnType",
+                            expression: MemberAccessExprSyntax(
+                                base: TypeExprSyntax(type: stableNamed.returnType.trimmed),
+                                name: .keyword(.self)
+                            )
+                        )
+                        LabeledExprSyntax(
+                            label: "sendingResult",
+                            expression: BooleanLiteralExprSyntax(literal: .keyword(.false))
+                        )
+                    }
+                )
+            }
+        }
+        
+        let stableMangledNames = DictionaryExprSyntax {
+            if case let .elements(elements) = mangledStableNames.content {
+                for element in elements {
+                    element
+                        .with(\.key, element.value)
+                        .with(\.value, element.key)
+                }
+            }
+        }
         
         return [
             // struct _$ {}
@@ -90,51 +259,7 @@ public struct StableNames: MemberMacro, ExtensionMacro {
                     value: IdentifierTypeSyntax(name: .identifier("String"))
                 )),
                 initializer: InitializerClauseSyntax(
-                    value: DictionaryExprSyntax {
-                        for (stableNamed, stableName) in stableNamed {
-                            DictionaryElementSyntax(
-                                key: stableName,
-                                value: FunctionCallExprSyntax(
-                                    callee: DeclReferenceExprSyntax(
-                                        baseName: .identifier("_mangle")
-                                    )
-                                ) {
-                                    LabeledExprSyntax(
-                                        label: "function",
-                                        expression: MemberAccessExprSyntax(
-                                            base: MemberAccessExprSyntax(
-                                                base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
-                                                name: .identifier(stableNamed.name.text)
-                                            ),
-                                            name: .keyword(.self)
-                                        )
-                                    )
-                                    LabeledExprSyntax(
-                                        label: "functionContainer",
-                                        expression: MemberAccessExprSyntax(
-                                            base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
-                                            name: .keyword(.self)
-                                        )
-                                    )
-                                    LabeledExprSyntax(
-                                        label: "parameters",
-                                        expression: stableNamed.parameters(manglingMetatypes: manglingMetatypes)
-                                    )
-                                    LabeledExprSyntax(
-                                        label: "returnType",
-                                        expression: MemberAccessExprSyntax(
-                                            base: TypeExprSyntax(type: stableNamed.returnType.trimmed),
-                                            name: .keyword(.self)
-                                        )
-                                    )
-                                    LabeledExprSyntax(
-                                        label: "sendingResult",
-                                        expression: BooleanLiteralExprSyntax(literal: .keyword(.false))
-                                    )
-                                }
-                            )
-                        }
-                    }
+                    value: mangledStableNames
                 )
             )),
             
@@ -151,45 +276,24 @@ public struct StableNames: MemberMacro, ExtensionMacro {
                     value: IdentifierTypeSyntax(name: .identifier("String"))
                 )),
                 initializer: InitializerClauseSyntax(
-                    value: FunctionCallExprSyntax(callee: DeclReferenceExprSyntax(baseName: .identifier("Dictionary"))) {
-                        LabeledExprSyntax(label: "uniqueKeysWithValues", expression: FunctionCallExprSyntax(
-                            callee: MemberAccessExprSyntax(
-                                base: DeclReferenceExprSyntax(baseName: .identifier("mangledStableNames")),
-                                name: .identifier("map")
-                            ),
-                            trailingClosure: ClosureExprSyntax {
-                                TupleExprSyntax {
-                                    LabeledExprSyntax(expression: DeclReferenceExprSyntax(baseName: .identifier("$1")))
-                                    LabeledExprSyntax(expression: DeclReferenceExprSyntax(baseName: .identifier("$0")))
-                                }
-                            }
-                        ) {})
-                    }
+                    value: stableMangledNames
                 )
             ))
-        ]
-    }
-    
-    public static func expansion(
-        of node: AttributeSyntax,
-        attachedTo declaration: some DeclGroupSyntax,
-        providingExtensionsOf type: some TypeSyntaxProtocol,
-        conformingTo protocols: [TypeSyntax],
-        in context: some MacroExpansionContext
-    ) throws -> [ExtensionDeclSyntax] {
-        return [
-            ExtensionDeclSyntax(
-                extendedType: type,
-                inheritanceClause: InheritanceClauseSyntax {
-                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
-                }
-            ) {}
         ]
     }
     
     enum StableNamed {
         case function(FunctionDeclSyntax)
         case variable(VariableDeclSyntax)
+        
+        var node: Syntax {
+            switch self {
+            case .function(let functionDecl):
+                Syntax(functionDecl)
+            case .variable(let variableDecl):
+                Syntax(variableDecl)
+            }
+        }
         
         var name: TokenSyntax {
             switch self {
