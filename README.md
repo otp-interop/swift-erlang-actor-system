@@ -78,6 +78,13 @@ let actorSystem = try ErlangActorSystem(name: "swift", cookie: "ABCDEFGHIJKLMNOP
 try await actorSystem.connect(to: "iex@hostname")
 ```
 
+You can confirm that the Swift node has connected to IEx with `Node.list/1`:
+
+```ex
+iex(iex@hostname)2> Node.list(:hidden)
+[:"swift@hostname"]
+```
+
 Now create an distributed actor and register a name for it.
 
 ```swift
@@ -98,7 +105,8 @@ try await actorSystem.register(pingPong, name: "ping_pong")
 In IEx, use [`GenServer.call/3`](https://hexdocs.pm/elixir/1.18.3/GenServer.html#call/3) from Elixir to make distributed calls on your Swift actor.
 
 ```ex
-iex(iex@hostname)2> GenServer.call({:ping_pong, :"swift@hostname"}, :ping)
+iex(iex@hostname)3> GenServer.call({:ping_pong, :"swift@hostname"}, :ping)
+"pong"
 ```
 
 ## Stable Names
@@ -140,7 +148,7 @@ defmodule Counter do
     use GenServer
 
     @impl true
-    def init(_), do: {:ok, 0}
+    def init(count), do: {:ok, count}
 
     @impl true
     def handle_call(:count, _from, state) do
@@ -149,12 +157,12 @@ defmodule Counter do
 
     @impl true
     def handle_call(:increment, _from, state) do
-        {:noreply, state + 1}
+        {:reply, :ok, state + 1}
     end
 
     @impl true
     def handle_call(:decrement, _from, state) do
-        {:noreply, state - 1}
+        {:reply, :ok, state - 1}
     end
 end
 ```
