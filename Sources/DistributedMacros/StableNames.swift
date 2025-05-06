@@ -95,7 +95,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
     ) throws -> [DeclSyntax] {
         // collect '@StableName' members
         let stableNamed = declaration.memberBlock.members
-            .compactMap({ (member) -> (StableNamed, StringLiteralExprSyntax)? in
+            .compactMap({ (member) -> (StableNamed, StringLiteralExprSyntax, StringLiteralExprSyntax?)? in
                 if let functionDecl = member.decl.as(FunctionDeclSyntax.self) {
                     guard case let .attribute(stableNameAttribute) = functionDecl.attributes.first(where: {
                         switch $0 {
@@ -111,7 +111,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                           case let .argumentList(arguments) = stableNameAttribute.arguments,
                           let stableName = arguments.first?.expression.as(StringLiteralExprSyntax.self)
                     else { return nil }
-                    return (.function(functionDecl), stableName)
+                    return (.function(functionDecl), stableName, arguments.indices.count > 1 ? arguments.last?.expression.as(StringLiteralExprSyntax.self) : nil)
                 } else if let variableDecl = member.decl.as(VariableDeclSyntax.self) {
                     guard case let .attribute(stableNameAttribute) = variableDecl.attributes.first(where: {
                         switch $0 {
@@ -127,14 +127,14 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                           case let .argumentList(arguments) = stableNameAttribute.arguments,
                           let stableName = arguments.first?.expression.as(StringLiteralExprSyntax.self)
                     else { return nil }
-                    return (.variable(variableDecl), stableName)
+                    return (.variable(variableDecl), stableName, arguments.indices.count > 1 ? arguments.last?.expression.as(StringLiteralExprSyntax.self) : nil)
                 } else {
                     return nil
                 }
             })
         
         // check for duplicates
-        for (index, (originalDecl, stableName)) in stableNamed.enumerated() {
+        for (index, (originalDecl, stableName, _)) in stableNamed.enumerated() {
             let duplicateNames = stableNamed
                 .enumerated()
                 .filter({
@@ -162,10 +162,10 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         let manglingMetatypes = TokenSyntax.identifier("_$")
         
         let mangledStableNames = DictionaryExprSyntax {
-            for (stableNamed, stableName) in stableNamed {
+            for (stableNamed, stableName, mangledName) in stableNamed {
                 DictionaryElementSyntax(
                     key: stableName,
-                    value: FunctionCallExprSyntax(
+                    value: ExprSyntax(mangledName) ?? ExprSyntax(FunctionCallExprSyntax(
                         callee: DeclReferenceExprSyntax(
                             baseName: .identifier("_mangle")
                         )
@@ -202,7 +202,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                             label: "sendingResult",
                             expression: BooleanLiteralExprSyntax(literal: .keyword(.false))
                         )
-                    }
+                    })
                 )
             }
         }
@@ -220,7 +220,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         return [
             // struct _$ {}
             DeclSyntax(StructDeclSyntax(name: manglingMetatypes) {
-                for (stableNamed, _) in stableNamed {
+                for (stableNamed, _, mangledName) in stableNamed where mangledName == nil {
                     // struct function {}
                     StructDeclSyntax(name: .identifier(stableNamed.name.text)) {
                         if case let .function(functionDecl) = stableNamed {

@@ -140,7 +140,7 @@ extension TermEncoder {
 /// Customizes the ``TermEncoder/Context/stringEncodingStrategy`` for the
 /// wrapped property.
 @propertyWrapper
-public struct AtomTermEncoding: Codable {
+public struct AtomTermEncoding: Codable, Sendable, Hashable {
     public var wrappedValue: String
     
     public init(wrappedValue: String = "") {
@@ -162,12 +162,14 @@ public struct AtomTermEncoding: Codable {
         var container = encoder.singleValueContainer()
         try container.encode(self.wrappedValue)
     }
+    
+    public var projectedValue: Self { self }
 }
 
 /// Customizes the ``TermEncoder/Context/stringEncodingStrategy`` for the
 /// wrapped property.
 @propertyWrapper
-public struct BinaryTermEncoding: Codable {
+public struct BinaryTermEncoding: Codable, Sendable, Hashable {
     public var wrappedValue: String
     
     public init(wrappedValue: String = "") {
@@ -189,12 +191,14 @@ public struct BinaryTermEncoding: Codable {
         var container = encoder.singleValueContainer()
         try container.encode(self.wrappedValue)
     }
+    
+    public var projectedValue: Self { self }
 }
 
 /// Customizes the ``TermEncoder/Context/stringEncodingStrategy`` for the
 /// wrapped property.
 @propertyWrapper
-public struct CharlistTermEncoding: Codable {
+public struct CharlistTermEncoding: Codable, Sendable, Hashable {
     public var wrappedValue: String
     
     public init(wrappedValue: String = "") {
@@ -216,6 +220,8 @@ public struct CharlistTermEncoding: Codable {
         var container = encoder.singleValueContainer()
         try container.encode(self.wrappedValue)
     }
+    
+    public var projectedValue: Self { self }
 }
 
 /// Customizes the ``TermEncoder/Context/unkeyedContainerEncodingStrategy`` for
@@ -229,7 +235,13 @@ public struct ListTermEncoding<Value> {
     public init(wrappedValue: Value) {
         self.wrappedValue = wrappedValue
     }
+    
+    public var projectedValue: Self { self }
 }
+
+extension ListTermEncoding: Sendable where Value: Sendable {}
+extension ListTermEncoding: Equatable where Value: Equatable {}
+extension ListTermEncoding: Hashable where Value: Equatable, Value: Hashable {}
 
 extension ListTermEncoding: Encodable where Value: Encodable {
     public func encode(to encoder: any Encoder) throws {
@@ -262,7 +274,13 @@ public struct TupleTermEncoding<Value> {
     public init(wrappedValue: Value) {
         self.wrappedValue = wrappedValue
     }
+    
+    public var projectedValue: Self { self }
 }
+
+extension TupleTermEncoding: Sendable where Value: Sendable {}
+extension TupleTermEncoding: Equatable where Value: Equatable {}
+extension TupleTermEncoding: Hashable where Value: Equatable, Value: Hashable {}
 
 extension TupleTermEncoding: Encodable where Value: Encodable {
     public func encode(to encoder: any Encoder) throws {
@@ -295,7 +313,13 @@ public struct MapTermEncoding<Value> {
     public init(wrappedValue: Value) {
         self.wrappedValue = wrappedValue
     }
+    
+    public var projectedValue: Self { self }
 }
+
+extension MapTermEncoding: Sendable where Value: Sendable {}
+extension MapTermEncoding: Equatable where Value: Equatable {}
+extension MapTermEncoding: Hashable where Value: Equatable, Value: Hashable {}
 
 extension MapTermEncoding: Encodable where Value: Encodable {
     public func encode(to encoder: any Encoder) throws {
@@ -326,7 +350,13 @@ public struct KeywordListTermEncoding<Value> {
     public init(wrappedValue: Value) {
         self.wrappedValue = wrappedValue
     }
+    
+    public var projectedValue: Self { self }
 }
+
+extension KeywordListTermEncoding: Sendable where Value: Sendable {}
+extension KeywordListTermEncoding: Equatable where Value: Equatable {}
+extension KeywordListTermEncoding: Hashable where Value: Equatable, Value: Hashable {}
 
 extension KeywordListTermEncoding: Encodable where Value: Encodable {
     public func encode(to encoder: any Encoder) throws {

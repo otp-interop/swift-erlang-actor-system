@@ -24,7 +24,17 @@ public final class ErlangTermBuffer {
         ei_x_append_buf(
             &subBuffer.buffer,
             buff.advanced(by: Int(range.lowerBound)),
-            range.upperBound - range.lowerBound
+            (range.upperBound - range.lowerBound) + 1
+        )
+        return subBuffer
+    }
+    
+    subscript(_ range: PartialRangeFrom<Int32>) -> ErlangTermBuffer {
+        let subBuffer = ErlangTermBuffer()
+        ei_x_append_buf(
+            &subBuffer.buffer,
+            buff.advanced(by: Int(range.lowerBound)),
+            buffsz - range.lowerBound
         )
         return subBuffer
     }

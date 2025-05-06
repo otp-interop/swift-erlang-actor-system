@@ -21,6 +21,10 @@ import Foundation
             distributed func ping() -> String {
                 return "pong"
             }
+            
+            distributed func greet(_ name: String) -> String {
+                return "Hello, \(name)!"
+            }
         }
         
         let cookie = UUID().uuidString
@@ -38,6 +42,7 @@ import Foundation
         }
         
         #expect(try await remoteActor.ping() == "pong")
+        #expect(try await remoteActor.greet("John Doe") == "Hello, John Doe!")
     }
     
     @StableNames
@@ -174,5 +179,31 @@ import Foundation
             throwing: (any Error).self,
             returning: Int.self
         ) == 2)
+    }
+    
+    @StableNames
+    distributed actor PGJoiner: HasRemoteCallAdapter {
+        typealias ActorSystem = ErlangActorSystem
+        
+        static func remoteCallAdapter(
+            for actor: ErlangActorSystemTests.PGJoiner
+        ) -> sending ProcessGroupRemoteCallAdapter {
+            .processGroup
+        }
+        
+        @StableName("greet")
+        distributed func greet(_ name: String) {
+            print("Hello, \(name)!")
+        }
+    }
+    
+    @Test func processGroups() async throws {
+        let actorSystem = try ErlangActorSystem(name: "swift", cookie: "LJTPNYYQIOIRKYDCWCQH")
+        try await actorSystem.connect(to: "iex1@DCKYRD-NMXCKatri")
+        
+        let actor = PGJoiner(actorSystem: actorSystem)
+        try await actor.join(group: "my_group")
+        
+        try await Task.sleep(for: .seconds(1024))
     }
 }
