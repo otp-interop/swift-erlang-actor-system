@@ -192,8 +192,9 @@ import Foundation
         }
         
         @StableName("greet")
-        distributed func greet(_ name: String) {
+        distributed func greet(_ name: String) async throws {
             print("Hello, \(name)!")
+            try await self.leave(group: "my_group")
         }
     }
     

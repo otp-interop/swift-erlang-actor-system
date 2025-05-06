@@ -152,7 +152,7 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
             message.decode(pid: &senderPID, index: &index)
             let monitorStartIndex = index
             message.skipTerm(index: &index)
-            let monitorReference = message[monitorStartIndex...index]
+            let monitorReference = message[monitorStartIndex..<index]
             
             let sender = Term.PID(pid: senderPID)
             let resultHandler = ResultHandler(

@@ -384,8 +384,9 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         throwing: Err.Type,
         returning: Res.Type
     ) async throws -> Res where Act: DistributedActor, Err: Error, Act.ID == ActorID, Res: Codable {
-        let targetIdentifier = (Act.self as? HasStableNames.Type)?.stableMangledNames[target.identifier]
-            ?? target.identifier
+        let targetIdentifier = (actor as? any _HasStableNames)?._stableNames[
+            String(target.description.split(separator: ".").last!)
+        ] ?? target.identifier
         
         let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter() ?? defaultRemoteCallAdapter
         
@@ -435,7 +436,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             }
             
             if remoteCall.continuationAdapter == nil {
-               continuation.resume(returning: ErlangTermBuffer())
+                continuation.resume(returning: ErlangTermBuffer())
             }
         }
         
@@ -448,8 +449,9 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         invocation: inout InvocationEncoder,
         throwing: Err.Type
     ) async throws where Act: DistributedActor, Err: Error, Act.ID == ActorID {
-        let targetIdentifier = (Act.self as? HasStableNames.Type)?.stableMangledNames[target.identifier]
-            ?? target.identifier
+        let targetIdentifier = (actor as? any _HasStableNames)?._stableNames[
+            String(target.description.split(separator: ".").last!)
+        ] ?? target.identifier
         
         let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter() ?? defaultRemoteCallAdapter
         
@@ -585,6 +587,7 @@ extension ErlangActorSystem {
     }
     
     func handleMessage(fileDescriptor: Int32, message: erlang_msg, buffer: ErlangTermBuffer) async throws {
+        
         let recipient = Term.PID(pid: message.to)
         if recipient == self.pid {
             switch Int32(message.msgtype) {
@@ -623,10 +626,11 @@ extension ErlangActorSystem {
                 }
                 
                 // match to each awaiting continuation
-                continuationChecks: for continuation in remoteCallContinuations {
+                continuationChecks: for (index, continuation) in remoteCallContinuations.enumerated() {
                     do {
                         nonisolated(unsafe) let result = try continuation.adapter.decode(buffer)
                         continuation.continuation.resume(with: result)
+                        remoteCallContinuations.remove(at: index)
                         break continuationChecks
                     } catch {
                         continue
@@ -656,14 +660,20 @@ extension ErlangActorSystem {
                 index: 0
             )
             
-            let mangledTarget = (type(of: actor) as? HasStableNames.Type)?.mangledStableNames[localCall.identifier] ?? localCall.identifier
-            
-            try! await self.executeDistributedTarget(
-                on: actor,
-                target: RemoteCallTarget(mangledTarget),
-                invocationDecoder: &invocationDecoder,
-                handler: handler
-            )
+            if let stableNamed = actor as? any _HasStableNames {
+                try! await stableNamed._executeStableName(
+                    target: RemoteCallTarget(localCall.identifier),
+                    invocationDecoder: &invocationDecoder,
+                    handler: handler
+                )
+            } else {
+                try! await self.executeDistributedTarget(
+                    on: actor,
+                    target: RemoteCallTarget(localCall.identifier),
+                    invocationDecoder: &invocationDecoder,
+                    handler: handler
+                )
+            }
         } else {
             print("=== UNKNOWN ACTOR MESSAGE ===")
             print(buffer)

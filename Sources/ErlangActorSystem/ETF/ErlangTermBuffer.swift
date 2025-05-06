@@ -38,6 +38,16 @@ public final class ErlangTermBuffer {
         )
         return subBuffer
     }
+    
+    subscript(_ range: Range<Int32>) -> ErlangTermBuffer {
+        let subBuffer = ErlangTermBuffer()
+        ei_x_append_buf(
+            &subBuffer.buffer,
+            buff.advanced(by: Int(range.lowerBound)),
+            range.upperBound - range.lowerBound
+        )
+        return subBuffer
+    }
 }
 
 extension ErlangTermBuffer: CustomDebugStringConvertible, CustomStringConvertible {

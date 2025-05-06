@@ -48,6 +48,20 @@ extension HasRemoteCallAdapter where Self: DistributedActor, RemoteCallAdapterTy
     public func join(
         group: String
     ) async throws {
+        try await withProcessGroups { processGroups in
+            try await processGroups.joinLocal(group, process: self.id)
+        }
+    }
+    
+    public func leave(
+        group: String
+    ) async throws {
+        try await withProcessGroups { processGroups in
+            try await processGroups.leaveLocal(group, process: self.id)
+        }
+    }
+    
+    private func withProcessGroups<Result: Sendable>(_ body: @Sendable (isolated ProcessGroups) async throws -> Result) async throws -> Result? {
         let processGroups: ProcessGroups
         if let existingActor = try actorSystem.registeredNames["pg"].flatMap({ try ProcessGroups.resolve(id: $0, using: actorSystem) }) {
             processGroups = existingActor
@@ -55,9 +69,7 @@ extension HasRemoteCallAdapter where Self: DistributedActor, RemoteCallAdapterTy
             processGroups = try await ProcessGroups.makeInstance(using: actorSystem)
         }
         
-        try await processGroups.whenLocal {
-            try await $0.joinLocal(group, process: self.id)
-        }
+        return try await processGroups.whenLocal(body)
     }
 }
 
@@ -92,7 +104,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
             for system: ActorSystem
         ) throws -> EncodedRemoteCall {
             switch invocation.identifier {
-            case "discover", "join":
+            case "discover", "join", "leave":
                 let message = ErlangTermBuffer()
                 message.newWithVersion()
                 if invocation.arguments.isEmpty {
@@ -139,26 +151,17 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
             case "$gen_cast":
                 let localCall = try genServer.decode(message, for: system)
                 return localCall
-            case "discover":
+            case let .some(identifier):
                 index = tupleStartIndex
                 message.skipTerm(index: &index)
                 return LocalCallInvocation(
                     sender: nil,
-                    identifier: "discover",
-                    arguments: message[argumentsStartIndex...index],
-                    resultHandler: nil
-                )
-            case "join":
-                index = tupleStartIndex
-                message.skipTerm(index: &index)
-                return LocalCallInvocation(
-                    sender: nil,
-                    identifier: "join",
+                    identifier: identifier,
                     arguments: message[argumentsStartIndex...index],
                     resultHandler: nil
                 )
             default:
-                fatalError("unhandled message sent to process group module")
+                fatalError()
             }
         }
     }
@@ -170,7 +173,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         var local: [ActorSystem.ActorID:[Group]] = [:]
         
         /// All remote joined groups
-        var remote: [ActorSystem.ActorID:[Group]] = [:]
+        var remote: [ActorSystem.ActorID:[Group:[ActorSystem.ActorID]]] = [:]
     }
     
     init(actorSystem: ActorSystem) async throws {
@@ -191,6 +194,13 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         }
     }
     
+    func leaveLocal(@AtomTermEncoding _ group: String, process: ActorSystem.ActorID) async throws {
+        state.local[process]?.removeAll(where: { $0 == $group })
+        try await broadcast(to: state.remote.keys) { remote in
+            try await remote.leave(self.id, process, [$group])
+        }
+    }
+    
     private func broadcast(
         to actors: some Sequence<ActorSystem.ActorID>,
         _ perform: (ProcessGroups) async throws -> ()
@@ -201,7 +211,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         }
     }
     
-    @StableName("discover", mangledName: "$s17ErlangActorSystem13ProcessGroups33_04D6C44C880EFB98E10FB3E6950B46F4LLC8discoveryyA2AC0B2IDOYaKFTE")
+    @StableName("discover")
     distributed func discover(_ peer: ActorSystem.ActorID) async throws {
         let remote = try ProcessGroups.resolve(id: peer, using: actorSystem)
         let groups = self.state.local.reduce(into: [Group:[Term.PID]]()) { syncGroups, local in
@@ -214,14 +224,25 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         try await remote.sync(self.id, groups.map({ SyncGroup(group: $0.key.wrappedValue, processes: $0.value) }))
     }
     
-    @StableName("sync", mangledName: "$s17ErlangActorSystem13ProcessGroups33_04D6C44C880EFB98E10FB3E6950B46F4LLC4syncyyA2AC0B2IDO_SayAA9SyncGroupVGtYaKFTE")
+    @StableName("sync")
     distributed func sync(_ peer: ActorSystem.ActorID, _ groups: [SyncGroup]) {
-        self.state.remote[peer] = groups.map(\.$group)
+        self.state.remote[peer] = Dictionary(
+            uniqueKeysWithValues: groups.map({
+                ($0.$group, $0.processes.map({ .pid($0) }))
+            })
+        )
     }
     
-    @StableName("join", mangledName: "$s17ErlangActorSystem13ProcessGroups33_04D6C44C880EFB98E10FB3E6950B46F4LLC4joinyyA2AC0B2IDO_AA16AtomTermEncodingVAHtYaKFTE")
+    @StableName("join")
     distributed func join(_ peer: ActorSystem.ActorID, _ group: Group, _ process: ActorSystem.ActorID) async throws {
-        fatalError()
+        self.state.remote[peer, default: [:]][group, default: []].insert(process, at: 0)
+    }
+    
+    @StableName("leave")
+    distributed func leave(_ peer: ActorSystem.ActorID, _ process: ActorSystem.ActorID, _ groups: [Group]) async throws {
+        for group in groups {
+            self.state.remote[peer, default: [:]][group, default: []].removeAll(where: { $0 == process })
+        }
     }
     
     static func makeInstance(using system: ActorSystem) async throws -> ProcessGroups {
@@ -230,23 +251,6 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         return processGroups
     }
 }
-
-//extension ProcessGroups: HasExplicitDispatch {
-//    nonisolated func executeDistributedTarget(
-//        target: RemoteCallTarget,
-//        invocationDecoder: inout ErlangActorSystem.InvocationDecoder,
-//        handler: ErlangActorSystem.ResultHandler
-//    ) async throws {
-//        switch target.identifier {
-//        case "discover":
-//            try await self.discover(try invocationDecoder.decodeNextArgument())
-//        case "sync":
-//            try await self.sync(try invocationDecoder.decodeNextArgument(), try invocationDecoder.decodeNextArgument())
-//        default:
-//            fatalError()
-//        }
-//    }
-//}
 
 /// `{group(), [pid()]}`
 struct SyncGroup: Codable {

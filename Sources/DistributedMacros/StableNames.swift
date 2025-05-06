@@ -19,7 +19,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                 name: actorName,
                 inheritanceClause: InheritanceClauseSyntax {
                     InheritedTypeSyntax(type: IdentifierTypeSyntax(name: protocolDecl.name))
-                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
+                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("_HasStableNames")))
                 }
             ) {
                 // create dummy implementations for all distributed functions
@@ -78,7 +78,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                 try ExtensionDeclSyntax(
                     extendedType: type,
                     inheritanceClause: InheritanceClauseSyntax {
-                        InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
+                        InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("_HasStableNames")))
                     }
                 ) {
                     for decl in try hasStableNamesMembers(for: declaration, in: context) {
@@ -157,128 +157,233 @@ public struct StableNames: ExtensionMacro, PeerMacro {
             }
         }
         
-        // create structs used for mangling
-        
-        let manglingMetatypes = TokenSyntax.identifier("_$")
-        
-        let mangledStableNames = DictionaryExprSyntax {
-            for (stableNamed, stableName, mangledName) in stableNamed {
-                DictionaryElementSyntax(
-                    key: stableName,
-                    value: ExprSyntax(mangledName) ?? ExprSyntax(FunctionCallExprSyntax(
-                        callee: DeclReferenceExprSyntax(
-                            baseName: .identifier("_mangle")
-                        )
-                    ) {
-                        LabeledExprSyntax(
-                            label: "function",
-                            expression: MemberAccessExprSyntax(
-                                base: MemberAccessExprSyntax(
-                                    base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
-                                    name: .identifier(stableNamed.name.text)
-                                ),
-                                name: .keyword(.self)
-                            )
-                        )
-                        LabeledExprSyntax(
-                            label: "functionContainer",
-                            expression: MemberAccessExprSyntax(
-                                base: DeclReferenceExprSyntax(baseName: manglingMetatypes),
-                                name: .keyword(.self)
-                            )
-                        )
-                        LabeledExprSyntax(
-                            label: "parameters",
-                            expression: stableNamed.parameters(manglingMetatypes: manglingMetatypes)
-                        )
-                        LabeledExprSyntax(
-                            label: "returnType",
-                            expression: MemberAccessExprSyntax(
-                                base: TypeExprSyntax(type: stableNamed.returnType.trimmed),
-                                name: .keyword(.self)
-                            )
-                        )
-                        LabeledExprSyntax(
-                            label: "sendingResult",
-                            expression: BooleanLiteralExprSyntax(literal: .keyword(.false))
-                        )
-                    })
-                )
-            }
+        /// ```swift
+        /// nonisolated var _stableNames: [String:String] { get }
+        /// ```
+        let stableNames = VariableDeclSyntax(
+            modifiers: [DeclModifierSyntax(name: .keyword(.nonisolated))],
+            bindingSpecifier: .keyword(.var)
+        ) {
+            PatternBindingSyntax(
+                pattern: IdentifierPatternSyntax(identifier: .identifier("_stableNames")),
+                typeAnnotation: TypeAnnotationSyntax(
+                    type: DictionaryTypeSyntax(
+                        key: IdentifierTypeSyntax(name: .identifier("String")),
+                        value: IdentifierTypeSyntax(name: .identifier("String"))
+                    )
+                ),
+                accessorBlock: AccessorBlockSyntax(accessors: .getter(CodeBlockItemListSyntax {
+                    DictionaryExprSyntax(content: .elements(DictionaryElementListSyntax {
+                        for (decl, stableName, _) in stableNamed {
+                            switch decl {
+                            case let .function(functionDecl):
+                                DictionaryElementSyntax(
+                                    key: StringLiteralExprSyntax(content: functionDecl.functionFullName),
+                                    value: stableName
+                                )
+                            case let .variable(variableDecl):
+                                DictionaryElementSyntax(
+                                    key: StringLiteralExprSyntax(
+                                        content: variableDecl
+                                            .bindings
+                                            .first!
+                                            .pattern
+                                            .as(IdentifierPatternSyntax.self)!
+                                            .identifier
+                                            .text
+                                    ),
+                                    value: stableName
+                                )
+                            }
+                        }
+                    }))
+                }))
+            )
         }
         
-        let stableMangledNames = DictionaryExprSyntax {
-            if case let .elements(elements) = mangledStableNames.content {
-                for element in elements {
-                    element
-                        .with(\.key, element.value)
-                        .with(\.value, element.key)
+        /// ```swift
+        /// nonisolated func _executeStableName(
+        ///     target: RemoteCallTarget,
+        ///     invocationDecoder: inout ErlangActorSystem.InvocationDecoder,
+        ///     handler: ErlangActorSystem.ResultHandler
+        /// ) async throws
+        /// ```
+        let executeStableName = FunctionDeclSyntax(
+            modifiers: [DeclModifierSyntax(name: .keyword(.nonisolated))],
+            name: .identifier("_executeStableName"),
+            signature: FunctionSignatureSyntax(
+                parameterClause: FunctionParameterClauseSyntax {
+                    FunctionParameterSyntax(
+                        firstName: .identifier("target"),
+                        type: IdentifierTypeSyntax(name: "RemoteCallTarget")
+                    )
+                    FunctionParameterSyntax(
+                        firstName: .identifier("invocationDecoder"),
+                        type: AttributedTypeSyntax(
+                            specifiers: [.simpleTypeSpecifier(SimpleTypeSpecifierSyntax(specifier: .keyword(.inout)))],
+                            baseType: MemberTypeSyntax(
+                                baseType: IdentifierTypeSyntax(name: "ErlangActorSystem"),
+                                name: .identifier("InvocationDecoder")
+                            )
+                        )
+                    )
+                    FunctionParameterSyntax(
+                        firstName: .identifier("handler"),
+                        type: MemberTypeSyntax(
+                            baseType: IdentifierTypeSyntax(name: .identifier("ErlangActorSystem")),
+                            name: .identifier("ResultHandler")
+                        )
+                    )
+                },
+                effectSpecifiers: FunctionEffectSpecifiersSyntax(
+                    asyncSpecifier: .keyword(.async),
+                    throwsClause: ThrowsClauseSyntax(
+                        throwsSpecifier: .keyword(.throws)
+                    )
+                )
+            )
+        ) {
+            SwitchExprSyntax(subject: MemberAccessExprSyntax(
+                base: DeclReferenceExprSyntax(baseName: .identifier("target")),
+                name: .identifier("identifier")
+            )) {
+                for (decl, stableName, _) in stableNamed {
+                    SwitchCaseSyntax(
+                        label: .case(
+                            SwitchCaseLabelSyntax(
+                                caseItems: [
+                                    SwitchCaseItemSyntax(pattern: ExpressionPatternSyntax(expression: stableName))
+                                ]
+                            )
+                        )
+                    ) {
+                        switch decl {
+                        case let .function(functionDecl):
+                            let callExpr = TryExprSyntax(
+                                expression: AwaitExprSyntax(
+                                    expression: FunctionCallExprSyntax(
+                                        callee: DeclReferenceExprSyntax(
+                                            baseName: functionDecl.name
+                                        )
+                                    ) {
+                                        for parameter in functionDecl.signature.parameterClause.parameters {
+                                            let decodeNext = FunctionCallExprSyntax(
+                                                callee: MemberAccessExprSyntax(
+                                                    base: DeclReferenceExprSyntax(
+                                                        baseName: .identifier("invocationDecoder")
+                                                    ),
+                                                    name: .identifier("decodeNextArgument")
+                                                )
+                                            )
+                                            switch parameter.firstName.tokenKind {
+                                            case .wildcard:
+                                                LabeledExprSyntax(
+                                                    expression: decodeNext
+                                                )
+                                            default:
+                                                LabeledExprSyntax(
+                                                    label: parameter.firstName.trimmed.text,
+                                                    expression: decodeNext
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            )
+                            
+                            if functionDecl.signature.returnClause == nil {
+                                callExpr
+                                TryExprSyntax(
+                                    expression: AwaitExprSyntax(
+                                        expression: FunctionCallExprSyntax(
+                                            callee: MemberAccessExprSyntax(
+                                                base: DeclReferenceExprSyntax(baseName: .identifier("handler")),
+                                                name: .identifier("onReturnVoid")
+                                            )
+                                        )
+                                    )
+                                )
+                            } else {
+                                TryExprSyntax(
+                                    expression: AwaitExprSyntax(
+                                        expression: FunctionCallExprSyntax(
+                                            callee: MemberAccessExprSyntax(
+                                                base: DeclReferenceExprSyntax(baseName: .identifier("handler")),
+                                                name: .identifier("onReturn")
+                                            )
+                                        ) {
+                                            LabeledExprSyntax(label: "value", expression: callExpr)
+                                        }
+                                    )
+                                )
+                            }
+                        case .variable:
+                            let callExpr = TryExprSyntax(
+                                expression: AwaitExprSyntax(
+                                    expression: MemberAccessExprSyntax(
+                                        base: DeclReferenceExprSyntax(baseName: .identifier("self")),
+                                        name: decl.name
+                                    )
+                                )
+                            )
+                            
+                            TryExprSyntax(
+                                expression: AwaitExprSyntax(
+                                    expression: FunctionCallExprSyntax(
+                                        callee: MemberAccessExprSyntax(
+                                            base: DeclReferenceExprSyntax(baseName: .identifier("handler")),
+                                            name: .identifier("onReturn")
+                                        )
+                                    ) {
+                                        LabeledExprSyntax(label: "value", expression: callExpr)
+                                    }
+                                )
+                            )
+                        }
+                    }
+                }
+                
+                // actorSystem.executeDistributedTarget(
+                //     on: actor,
+                //     target: RemoteCallTarget(localCall.identifier),
+                //     invocationDecoder: &invocationDecoder,
+                //     handler: handler
+                // )
+                SwitchCaseSyntax(label: .default(SwitchDefaultLabelSyntax())) {
+                    TryExprSyntax(
+                        expression: AwaitExprSyntax(
+                            expression: FunctionCallExprSyntax(
+                                callee: MemberAccessExprSyntax(
+                                    base: DeclReferenceExprSyntax(baseName: .identifier("actorSystem")),
+                                    name: .identifier("executeDistributedTarget")
+                                )
+                            ) {
+                                LabeledExprSyntax(
+                                    label: "on",
+                                    expression: DeclReferenceExprSyntax(baseName: .identifier("self"))
+                                )
+                                LabeledExprSyntax(
+                                    label: "target",
+                                    expression: DeclReferenceExprSyntax(baseName: .identifier("target"))
+                                )
+                                LabeledExprSyntax(
+                                    label: "invocationDecoder",
+                                    expression: InOutExprSyntax(expression: DeclReferenceExprSyntax(baseName: .identifier("invocationDecoder")))
+                                )
+                                LabeledExprSyntax(
+                                    label: "handler",
+                                    expression: DeclReferenceExprSyntax(baseName: .identifier("handler"))
+                                )
+                            }
+                        )
+                    )
                 }
             }
         }
         
         return [
-            // struct _$ {}
-            DeclSyntax(StructDeclSyntax(name: manglingMetatypes) {
-                for (stableNamed, _, mangledName) in stableNamed where mangledName == nil {
-                    // struct function {}
-                    StructDeclSyntax(name: .identifier(stableNamed.name.text)) {
-                        if case let .function(functionDecl) = stableNamed {
-                            let labeledArguments = functionDecl.signature.parameterClause.parameters
-                                .filter({ $0.firstName.tokenKind != .wildcard })
-                                .reversed()
-                            if let first = labeledArguments.first
-                            {
-                                // nested labeled parameter structs
-                                // struct labeledParameter1 {
-                                //     struct labeledParameter2 { ... }
-                                // }
-                                labeledArguments.dropFirst().reduce(
-                                    StructDeclSyntax(name: .identifier(first.firstName.text)) {}
-                                ) { previousResult, parameter in
-                                    StructDeclSyntax(name: .identifier(parameter.firstName.text)) {
-                                        previousResult
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }),
-            
-            DeclSyntax(VariableDeclSyntax(
-                modifiers: DeclModifierListSyntax {
-                    DeclModifierSyntax(name: .keyword(.static))
-                },
-                .let,
-                name: PatternSyntax(IdentifierPatternSyntax(
-                    identifier: .identifier("mangledStableNames")
-                )),
-                type: TypeAnnotationSyntax(type: DictionaryTypeSyntax(
-                    key: IdentifierTypeSyntax(name: .identifier("String")),
-                    value: IdentifierTypeSyntax(name: .identifier("String"))
-                )),
-                initializer: InitializerClauseSyntax(
-                    value: mangledStableNames
-                )
-            )),
-            
-            DeclSyntax(VariableDeclSyntax(
-                modifiers: DeclModifierListSyntax {
-                    DeclModifierSyntax(name: .keyword(.static))
-                },
-                .let,
-                name: PatternSyntax(IdentifierPatternSyntax(
-                    identifier: .identifier("stableMangledNames")
-                )),
-                type: TypeAnnotationSyntax(type: DictionaryTypeSyntax(
-                    key: IdentifierTypeSyntax(name: .identifier("String")),
-                    value: IdentifierTypeSyntax(name: .identifier("String"))
-                )),
-                initializer: InitializerClauseSyntax(
-                    value: stableMangledNames
-                )
-            ))
+            DeclSyntax(executeStableName),
+            DeclSyntax(stableNames)
         ]
     }
     
@@ -391,3 +496,18 @@ public struct StableNames: ExtensionMacro, PeerMacro {
     }
 }
 
+extension FunctionDeclSyntax {
+    var functionFullName: String {
+        var result = name.text
+        result += "("
+        
+        for parameter in signature.parameterClause.parameters {
+            result += parameter.firstName.text
+            result += ":"
+        }
+        
+        result += ")"
+        
+        return result
+    }
+}
