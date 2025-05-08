@@ -1,5 +1,6 @@
 import erl_interface
 import Distributed
+import Synchronization
 
 /// An actor system manages an Erlang C node, which can contain many processes
 /// (actors).
@@ -24,11 +25,25 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     
     private(set) var port: Int32 = 0
     
-    var reservedProcesses = Set<ActorID>()
-    var processes = [ActorID:any DistributedActor]()
-    var registeredNames = [String:ActorID]()
+    private(set) var reservedProcesses = Set<ActorID>()
+    private let processes = Mutex<[ActorID:any DistributedActor]>([:])
+    private(set) var registeredNames = [String:ActorID]()
     
-    var remoteNodes = [String:RemoteNode]()
+    private(set) var remoteNodes = [String:RemoteNode]()
+    private(set) var nodesMonitors = Set<ActorID>()
+    private func nodeReady(_ node: RemoteNode, name: String) async {
+        self.remoteNodes[name] = node
+        let monitors = self.processes.withLock { processes in
+            nodesMonitors.compactMap({ monitor in
+                processes[monitor] as? any NodesMonitor
+            })
+        }
+        for monitor in monitors {
+            await monitor.whenLocal { actor in
+                actor.up(name)
+            }
+        }
+    }
     
     public var pid: Term.PID {
         Term.PID(pid: node.`self`)
@@ -73,12 +88,14 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 guard let self else { continue }
                 var conn = ErlConnect()
                 let fileDescriptor = ei_accept(&node, listenDescriptor, &conn)
-                guard fileDescriptor >= 0
+                guard fileDescriptor >= 0,
+                      let nodeName = String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)
                 else { continue }
-                self.remoteNodes[String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)!] = RemoteNode(
+                let node = RemoteNode(
                     fileDescriptor: fileDescriptor,
                     onReceive: handleMessage
                 )
+                await self.nodeReady(node, name: nodeName)
             }
         }
     }
@@ -121,53 +138,26 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 guard let self else { continue }
                 var conn = ErlConnect()
                 let fileDescriptor = ei_accept(&node, listenDescriptor, &conn)
-                guard fileDescriptor >= 0
+                guard fileDescriptor >= 0,
+                      let nodeName = String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)
                 else { continue }
-                self.remoteNodes[String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)!] = RemoteNode(
+                let node = RemoteNode(
                     fileDescriptor: fileDescriptor,
                     onReceive: handleMessage
                 )
+                await self.nodeReady(node, name: nodeName)
             }
         }
     }
     
-    /// Register a name for an actor with `:global`.
+    /// Register a name for an actor.
+    ///
+    /// The actor system will forward messages for this name to the provided actor.
     public func register<Act: DistributedActor>(
         _ actor: Act,
         name: String
-    ) async throws where Act.ID == ActorID {
+    ) where Act.ID == ActorID {
         registeredNames[name] = actor.id
-        for remoteNode in remoteNodes.values {
-            var pid = self.pid.pid
-            
-            // :global.register_name_external(name, self(), {:global, :cnode})
-            let args = ErlangTermBuffer()
-            args.encode(listHeader: 3)
-            
-            args.encode(atom: strdup(name))
-            args.encode(pid: &pid)
-            
-            args.encode(tupleHeader: 2) // {:global, :cnode}
-            args.encode(atom: "global")
-            args.encode(atom: "cnode")
-            
-            args.encodeEmptyList() // tail
-            
-            try await withCheckedThrowingContinuation { continuation in
-                registerContinuation = continuation
-                
-                guard ei_rpc_to(
-                    &self.node,
-                    remoteNode.fileDescriptor,
-                    strdup("global"),
-                    strdup("register_name_external"),
-                    args.buff,
-                    args.index
-                ) == 0
-                else { return continuation.resume(throwing: ErlangActorSystemError.registerFailed) }
-            }
-            registerContinuation = nil
-        }
     }
     
     private func pid(for id: ActorID) -> Term.PID {
@@ -370,11 +360,15 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     ) throws -> Act? where Act : DistributedActor, Act.ID == ActorID {
         // if we return nil, this actor is on another node
         // and Swift will create a remote actor reference.
-        return self.processes[id] as? Act
+        return self.processes.withLock {
+            $0[id] as? Act
+        }
     }
     
     public func actorReady<Act>(_ actor: Act) where Act: DistributedActor, Act.ID == ActorID {
-        self.processes[actor.id] = actor
+        self.processes.withLock {
+            $0[actor.id] = actor
+        }
     }
     
     public func remoteCall<Act, Err, Res>(
@@ -388,7 +382,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             String(target.description.split(separator: ".").last!)
         ] ?? target.identifier
         
-        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter() ?? defaultRemoteCallAdapter
+        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
         
         let remoteCall = try remoteCallAdapter.encode(
             RemoteCallInvocation(
@@ -453,7 +447,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             String(target.description.split(separator: ".").last!)
         ] ?? target.identifier
         
-        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter() ?? defaultRemoteCallAdapter
+        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
         
         let remoteCall = try remoteCallAdapter.encode(
             RemoteCallInvocation(
@@ -518,6 +512,13 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     
     public func resignID(_ id: ActorID) {
         self.reservedProcesses.remove(id)
+        _ = self.processes.withLock({
+            $0.removeValue(forKey: id)
+        })
+        self.nodesMonitors.remove(id)
+        for (name, value) in self.registeredNames where value == id {
+            self.registeredNames.removeValue(forKey: name)
+        }
     }
     
     public func makeInvocationEncoder() -> InvocationEncoder {
@@ -569,7 +570,7 @@ extension ErlangActorSystem {
         
         let connection = RemoteNode(fileDescriptor: fileDescriptor, onReceive: handleMessage)
         
-        self.remoteNodes[nodeName] = connection
+        await self.nodeReady(connection, name: nodeName)
     }
     
     /// Establishes a connection between this node and a remote node.
@@ -583,11 +584,10 @@ extension ErlangActorSystem {
         
         let connection = RemoteNode(fileDescriptor: fileDescriptor, onReceive: handleMessage)
         
-        self.remoteNodes["\(ip):\(port)"] = connection
+        await self.nodeReady(connection, name: "\(ip):\(port)")
     }
     
     func handleMessage(fileDescriptor: Int32, message: erlang_msg, buffer: ErlangTermBuffer) async throws {
-        
         let recipient = Term.PID(pid: message.to)
         if recipient == self.pid {
             switch Int32(message.msgtype) {
@@ -640,11 +640,11 @@ extension ErlangActorSystem {
                 print("=== UNKNOWN ACTOR SYSTEM MESSAGE ===")
                 print(buffer)
             }
-        } else if let actor = self.processes[.pid(recipient)]
-                    ?? self.registeredNames[String(cString: Array(tuple: message.toname, start: \.0), encoding: .utf8)!]
-                        .flatMap({ self.processes[$0] })
+        } else if let actor = self.registeredNames[String(cString: Array(tuple: message.toname, start: \.0), encoding: .utf8)!]
+            .flatMap({ id in self.processes.withLock({ $0[id] }) })
+                    ?? self.processes.withLock({ $0[.pid(recipient)] })
         {
-            let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter() ?? defaultRemoteCallAdapter
+            let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
             let localCall = try remoteCallAdapter.decode(buffer, for: self)
             
             let handler = ResultHandler(
@@ -678,6 +678,18 @@ extension ErlangActorSystem {
             print("=== UNKNOWN ACTOR MESSAGE ===")
             print(buffer)
         }
+    }
+}
+
+extension ErlangActorSystem {
+    public protocol NodesMonitor: DistributedActor where ActorSystem == ErlangActorSystem {
+        func up(_ node: String)
+        func down(_ node: String)
+    }
+    
+    /// Calls a function whenever the nodes
+    public func monitorNodes(_ monitor: some NodesMonitor) {
+        nodesMonitors.insert(monitor.id)
     }
 }
 

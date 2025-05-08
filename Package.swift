@@ -6,7 +6,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "ErlangActorSystem",
-    platforms: [.iOS(.v17), .macOS(.v11)],
+    platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(

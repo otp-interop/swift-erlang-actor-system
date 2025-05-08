@@ -1,89 +1,78 @@
 import Distributed
 import erl_interface
 
+/// An adapter that handles messages from a [process group](https://www.erlang.org/doc/apps/kernel/pg.html).
+///
+/// ## Joining/Leaving Groups
+/// Use ``HasRemoteCallAdapter/join(scope:group:)`` to add an actor to a process group.
+///
+/// ```swift
+/// myActor.join(group: "my_group")
+/// ```
+///
+/// - Note: By default, the scope `pg` will be used.
+///
+/// Use ``HasRemoteCallAdapter/leave(scope:group:)`` to leave a group.
 public struct ProcessGroupRemoteCallAdapter: RemoteCallAdapter {
-    let genServer = GenServerRemoteCallAdapter()
+    let adapter: any RemoteCallAdapter
+    
+    init(_ adapter: some RemoteCallAdapter) {
+        self.adapter = adapter
+    }
     
     public func encode(
         _ invocation: RemoteCallInvocation,
         for system: ActorSystem
     ) throws -> EncodedRemoteCall {
-        fatalError()
+        try adapter.encode(invocation, for: system)
     }
     
     public func decode(
         _ message: ErlangTermBuffer,
         for system: ActorSystem
     ) throws -> LocalCallInvocation {
-        var index: Int32 = 0
-        var version: Int32 = 0
-        message.decode(version: &version, index: &index)
-        
-        let tupleStartIndex = index
-        var arity: Int32 = 0
-        message.decode(tupleHeader: &arity, index: &index)
-        
-        var messageType: [CChar] = [CChar](repeating: 0, count: Int(MAXATOMLEN))
-        message.decode(atom: &messageType, index: &index)
-        
-        let argumentsStartIndex = index
-        
-        index = tupleStartIndex
-        message.skipTerm(index: &index)
-        
-        return LocalCallInvocation(
-            sender: nil,
-            identifier: String(cString: messageType, encoding: .utf8)!,
-            arguments: message[argumentsStartIndex...index],
-            resultHandler: nil
-        )
+        try adapter.decode(message, for: system)
     }
 }
 
 extension RemoteCallAdapter where Self == ProcessGroupRemoteCallAdapter {
-    static var processGroup: Self { .init() }
+    public static var processGroup: Self { .init(.primitive) }
+    public static func processGroup(_ adapter: some RemoteCallAdapter) -> Self { .init(adapter) }
 }
 
 extension HasRemoteCallAdapter where Self: DistributedActor, RemoteCallAdapterType == ProcessGroupRemoteCallAdapter, ActorSystem == ErlangActorSystem {
+    /// Join this process to a group in a given scope.
     public func join(
+        scope: String = "pg",
         group: String
     ) async throws {
-        try await withProcessGroups { processGroups in
-            try await processGroups.joinLocal(group, process: self.id)
+        try await ProcessGroups.resolve(scope: scope, using: actorSystem) { pg in
+            try await pg.joinLocal(group, process: self.id)
         }
     }
     
+    /// Remove this process from a group in a given scope.
     public func leave(
+        scope: String = "pg",
         group: String
     ) async throws {
-        try await withProcessGroups { processGroups in
-            try await processGroups.leaveLocal(group, process: self.id)
+        try await ProcessGroups.resolve(scope: scope, using: actorSystem) { pg in
+            try await pg.leaveLocal(group, process: self.id)
         }
-    }
-    
-    private func withProcessGroups<Result: Sendable>(_ body: @Sendable (isolated ProcessGroups) async throws -> Result) async throws -> Result? {
-        let processGroups: ProcessGroups
-        if let existingActor = try actorSystem.registeredNames["pg"].flatMap({ try ProcessGroups.resolve(id: $0, using: actorSystem) }) {
-            processGroups = existingActor
-        } else {
-            processGroups = try await ProcessGroups.makeInstance(using: actorSystem)
-        }
-        
-        return try await processGroups.whenLocal(body)
     }
 }
 
 @StableNames
-private distributed actor ProcessGroups: HasRemoteCallAdapter {
-    typealias ActorSystem = ErlangActorSystem
+public distributed actor ProcessGroups: HasRemoteCallAdapter {
+    public typealias ActorSystem = ErlangActorSystem
     
     typealias Group = AtomTermEncoding
     
-    static func remoteCallAdapter(for actor: ProcessGroups) -> sending RemoteCallAdapterType {
-        return RemoteCallAdapterType()
+    public nonisolated var remoteCallAdapter: RemoteCallAdapterType {
+        RemoteCallAdapterType()
     }
     
-    struct RemoteCallAdapterType: RemoteCallAdapter {
+    public struct RemoteCallAdapterType: RemoteCallAdapter {
         let genServer = GenServerRemoteCallAdapter(Dispatcher())
         
         struct Dispatcher: GenServerRemoteCallAdapter.Dispatcher {
@@ -99,7 +88,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
             }
         }
         
-        func encode(
+        public func encode(
             _ invocation: RemoteCallInvocation,
             for system: ActorSystem
         ) throws -> EncodedRemoteCall {
@@ -130,7 +119,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
             }
         }
         
-        func decode(
+        public func decode(
             _ message: ErlangTermBuffer,
             for system: ActorSystem
         ) throws -> LocalCallInvocation {
@@ -167,6 +156,7 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
     }
     
     var state = State()
+    let scope: String
     
     struct State: Codable {
         /// All locally joined groups
@@ -176,12 +166,16 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
         var remote: [ActorSystem.ActorID:[Group:[ActorSystem.ActorID]]] = [:]
     }
     
-    init(actorSystem: ActorSystem) async throws {
+    init(scope: String, actorSystem: ActorSystem) async throws {
         self.actorSystem = actorSystem
+        
+        self.scope = scope
+        
+        actorSystem.monitorNodes(self)
         
         // send "discover" to all nodes in the cluster
         try await broadcast(
-            to: actorSystem.remoteNodes.keys.map({ .name("pg", node: $0) })
+            to: actorSystem.remoteNodes.keys.map({ .name(scope, node: $0) })
         ) { remote in
             try await remote.discover(self.id)
         }
@@ -244,12 +238,6 @@ private distributed actor ProcessGroups: HasRemoteCallAdapter {
             self.state.remote[peer, default: [:]][group, default: []].removeAll(where: { $0 == process })
         }
     }
-    
-    static func makeInstance(using system: ActorSystem) async throws -> ProcessGroups {
-        let processGroups = try await ProcessGroups(actorSystem: system)
-        try await system.register(processGroups, name: "pg")
-        return processGroups
-    }
 }
 
 /// `{group(), [pid()]}`
@@ -278,5 +266,84 @@ struct SyncGroup: Codable {
         
         try container.encode(self.group)
         try container.encode(self.processes)
+    }
+}
+
+extension ProcessGroups {
+    @discardableResult
+    public static func start(
+        scope: String = "pg",
+        using actorSystem: ActorSystem
+    ) async throws -> ProcessGroups? {
+        try await resolve(scope: scope, using: actorSystem) { $0 }
+    }
+    
+    /// List all local members of a group.
+    public static func localMembers(
+        scope: String = "pg",
+        group: String,
+        using actorSystem: ActorSystem
+    ) async throws -> Set<ActorSystem.ActorID> {
+        let group = AtomTermEncoding(wrappedValue: group)
+        return try await resolve(scope: scope, using: actorSystem) { pg in
+            Set(pg.state.local.filter({ $0.value.contains(group) }).keys)
+        } ?? []
+    }
+    
+    /// List all members of a group.
+    public static func members(
+        scope: String = "pg",
+        group: String,
+        using actorSystem: ActorSystem
+    ) async throws -> Set<ActorSystem.ActorID> {
+        let group = AtomTermEncoding(wrappedValue: group)
+        return try await resolve(scope: scope, using: actorSystem) { pg in
+            let local = Set(pg.state.local.filter({ $0.value.contains(group) }).keys)
+            let remote = Set(pg.state.remote.values.flatMap({ $0[group, default: []] }))
+            return local.union(remote)
+        } ?? []
+    }
+    
+    /// List all groups in the given scope.
+    public static func groups(
+        scope: String = "pg",
+        using actorSystem: ActorSystem
+    ) async throws -> Set<String> {
+        return try await resolve(scope: scope, using: actorSystem) { pg in
+            let local = Set(pg.state.local.flatMap(\.value).map(\.wrappedValue))
+            let remote = Set(pg.state.remote.values.flatMap(\.keys).map(\.wrappedValue))
+            return local.union(remote)
+        } ?? []
+    }
+    
+    /// Get or create a `ProcessGroups` instance with the given scope name.
+    static func resolve<Result: Sendable>(
+        scope: String,
+        using actorSystem: ActorSystem,
+        _ body: @Sendable (isolated ProcessGroups) async throws -> Result
+    ) async throws -> Result? {
+        let processGroups: ProcessGroups
+        if let existingActor = try actorSystem.registeredNames[scope].flatMap({ try ProcessGroups.resolve(id: $0, using: actorSystem) }) {
+            processGroups = existingActor
+        } else {
+            processGroups = try await ProcessGroups(scope: scope, actorSystem: actorSystem)
+            actorSystem.register(processGroups, name: scope)
+        }
+        
+        return try await processGroups.whenLocal(body)
+    }
+}
+
+extension ProcessGroups: ErlangActorSystem.NodesMonitor {
+    public func up(_ node: String) {
+        guard let remote = try? ProcessGroups.resolve(id: .name(scope, node: node), using: actorSystem)
+        else { return }
+        Task {
+            try await remote.discover(self.id)
+        }
+    }
+    
+    public func down(_ node: String) {
+        return
     }
 }

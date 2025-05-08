@@ -330,5 +330,5 @@ extension GenServerRemoteCallAdapter.Dispatcher where Self == GenServerRemoteCal
 }
 
 extension RemoteCallAdapter where Self == GenServerRemoteCallAdapter {
-    static var genServer: Self { .init() }
+    public static var genServer: Self { .init() }
 }

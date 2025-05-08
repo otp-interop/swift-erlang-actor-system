@@ -182,29 +182,59 @@ import Foundation
     }
     
     @StableNames
-    distributed actor PGJoiner: HasRemoteCallAdapter {
+    distributed actor ProcessGroupTestActor: HasRemoteCallAdapter {
         typealias ActorSystem = ErlangActorSystem
         
-        static func remoteCallAdapter(
-            for actor: ErlangActorSystemTests.PGJoiner
-        ) -> sending ProcessGroupRemoteCallAdapter {
+        nonisolated var remoteCallAdapter: ProcessGroupRemoteCallAdapter {
             .processGroup
         }
         
-        @StableName("greet")
-        distributed func greet(_ name: String) async throws {
-            print("Hello, \(name)!")
-            try await self.leave(group: "my_group")
+        @StableName("test")
+        distributed func test() {
+            
         }
     }
     
     @Test func processGroups() async throws {
-        let actorSystem = try ErlangActorSystem(name: "swift", cookie: "LJTPNYYQIOIRKYDCWCQH")
-        try await actorSystem.connect(to: "iex1@DCKYRD-NMXCKatri")
+        let cookie = UUID().uuidString
+        let actorSystem1 = try ErlangActorSystem(name: "system1", cookie: cookie)
+        let actorSystem2 = try ErlangActorSystem(name: "system2", cookie: cookie)
         
-        let actor = PGJoiner(actorSystem: actorSystem)
-        try await actor.join(group: "my_group")
+        try await ProcessGroups.start(using: actorSystem1)
+        try await ProcessGroups.start(using: actorSystem2)
         
-        try await Task.sleep(for: .seconds(1024))
+        try await actorSystem1.connect(to: actorSystem2.name)
+        
+        let system1actor1 = ProcessGroupTestActor(actorSystem: actorSystem1)
+        try await system1actor1.join(group: "group_1")
+        
+        let system1actor2 = ProcessGroupTestActor(actorSystem: actorSystem1)
+        try await system1actor2.join(group: "group_2")
+        
+        let system2actor1 = ProcessGroupTestActor(actorSystem: actorSystem2)
+        try await system2actor1.join(group: "group_1")
+        
+        let system2actor2 = ProcessGroupTestActor(actorSystem: actorSystem2)
+        try await system2actor2.join(group: "group_2")
+        
+        #expect(try await ProcessGroups.groups(using: actorSystem1) == ["group_1", "group_2"])
+        #expect(try await ProcessGroups.groups(using: actorSystem2) == ["group_1", "group_2"])
+        
+        #expect(try await ProcessGroups.localMembers(group: "group_1", using: actorSystem1) == [system1actor1.id])
+        #expect(try await ProcessGroups.localMembers(group: "group_2", using: actorSystem1) == [system1actor2.id])
+        
+        #expect(try await ProcessGroups.localMembers(group: "group_1", using: actorSystem2) == [system2actor1.id])
+        #expect(try await ProcessGroups.localMembers(group: "group_2", using: actorSystem2) == [system2actor2.id])
+        
+        var members: Set<ErlangActorSystem.ActorID>
+        repeat {
+            members = try await ProcessGroups.members(group: "group_1", using: actorSystem1)
+        } while members != [system1actor1.id, system2actor1.id]
+        #expect(members == [system1actor1.id, system2actor1.id])
+        
+        for member in try await ProcessGroups.members(group: "group_2", using: actorSystem2) {
+            let actor = try ProcessGroupTestActor.resolve(id: member, using: actorSystem2)
+            try await actor.test()
+        }
     }
 }

@@ -161,7 +161,10 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         /// nonisolated var _stableNames: [String:String] { get }
         /// ```
         let stableNames = VariableDeclSyntax(
-            modifiers: [DeclModifierSyntax(name: .keyword(.nonisolated))],
+            modifiers: [
+                DeclModifierSyntax(name: .keyword(.public)),
+                DeclModifierSyntax(name: .keyword(.nonisolated))
+            ],
             bindingSpecifier: .keyword(.var)
         ) {
             PatternBindingSyntax(
@@ -209,7 +212,10 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         /// ) async throws
         /// ```
         let executeStableName = FunctionDeclSyntax(
-            modifiers: [DeclModifierSyntax(name: .keyword(.nonisolated))],
+            modifiers: [
+                DeclModifierSyntax(name: .keyword(.public)),
+                DeclModifierSyntax(name: .keyword(.nonisolated))
+            ],
             name: .identifier("_executeStableName"),
             signature: FunctionSignatureSyntax(
                 parameterClause: FunctionParameterClauseSyntax {

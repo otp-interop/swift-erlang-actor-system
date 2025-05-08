@@ -20,17 +20,12 @@ public protocol RemoteCallAdapter {
 /// A protocol that describes the ``RemoteCallAdapter`` to use for this actor.
 public protocol HasRemoteCallAdapter {
     associatedtype RemoteCallAdapterType: RemoteCallAdapter
+    
     /// The ``RemoteCallAdapter`` to use for this actor.
     ///
     /// If this is not set, the ``RemoteCallAdapter`` passed to
     /// ``ErlangActorSystem`` will be used instead.
-    static func remoteCallAdapter(for actor: Self) -> sending RemoteCallAdapterType
-}
-
-extension HasRemoteCallAdapter {
-    func remoteCallAdapter() -> sending RemoteCallAdapterType {
-        return Self.remoteCallAdapter(for: self)
-    }
+    nonisolated var remoteCallAdapter: RemoteCallAdapterType { get }
 }
 
 extension ErlangActorSystem {
