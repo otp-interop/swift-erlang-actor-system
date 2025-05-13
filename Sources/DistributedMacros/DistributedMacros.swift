@@ -5,8 +5,6 @@ import SwiftSyntaxMacros
 struct DistributedMacros: CompilerPlugin {
     var providingMacros: [Macro.Type] = [
         StableName.self,
-        StableNames.self,
-        
-        RemoteDeclaration.self
+        StableNames.self
     ]
 }

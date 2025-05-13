@@ -9,46 +9,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        if let protocolDecl = declaration.as(ProtocolDeclSyntax.self) {
-            let actorName = TokenSyntax.identifier("_RemoteActorFor\(protocolDecl.name.text)")
-            var actorDecl = ActorDeclSyntax(
-                modifiers: [
-                    DeclModifierSyntax(name: .keyword(.public)),
-                    DeclModifierSyntax(name: .keyword(.distributed))
-                ],
-                name: actorName,
-                inheritanceClause: InheritanceClauseSyntax {
-                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: protocolDecl.name))
-                    InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("_HasStableNames")))
-                }
-            ) {
-                // create dummy implementations for all distributed functions
-                for member in protocolDecl.memberBlock.members {
-                    if let functionDecl = member.decl.as(FunctionDeclSyntax.self) {
-                        functionDecl.with(\.body, CodeBlockSyntax {
-                            FunctionCallExprSyntax(callee: DeclReferenceExprSyntax(baseName: .identifier("fatalError")))
-                        })
-                    } else if let variableDecl = member.decl.as(VariableDeclSyntax.self) {
-                        variableDecl.with(\.bindings, PatternBindingListSyntax(variableDecl.bindings.map({
-                            $0.with(\.accessorBlock, AccessorBlockSyntax(accessors: .getter(CodeBlockItemListSyntax {
-                                FunctionCallExprSyntax(callee: DeclReferenceExprSyntax(baseName: .identifier("fatalError")))
-                            })))
-                        })))
-                    }
-                }
-            }
-            
-            actorDecl.memberBlock.members.append(
-                contentsOf: try hasStableNamesMembers(for: actorDecl, in: context)
-                    .map({ MemberBlockItemSyntax(decl: $0) })
-            )
-            
-            return [
-                DeclSyntax(actorDecl)
-            ]
-        } else {
-            return []
-        }
+        return []
     }
     
     public static func expansion(
@@ -58,35 +19,20 @@ public struct StableNames: ExtensionMacro, PeerMacro {
         conformingTo protocols: [TypeSyntax],
         in context: some MacroExpansionContext
     ) throws -> [ExtensionDeclSyntax] {
-        if let protocolDecl = declaration.as(ProtocolDeclSyntax.self) {
-            return [
-                ExtensionDeclSyntax(
-                    extendedType: type
-                ) {
-                    TypeAliasDeclSyntax(
-                        name: .identifier("RemoteActor"),
-                        initializer: TypeInitializerClauseSyntax(
-                            value: type.as(MemberTypeSyntax.self).flatMap({
-                                TypeSyntax($0.with(\.name, .identifier("_RemoteActorFor\(protocolDecl.name.text)")))
-                            }) ?? TypeSyntax(IdentifierTypeSyntax(name: .identifier("_RemoteActorFor\(protocolDecl.name.text)")))
-                        )
-                    )
-                }
-            ]
-        } else {
-            return [
-                try ExtensionDeclSyntax(
-                    extendedType: type,
-                    inheritanceClause: InheritanceClauseSyntax {
-                        InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("_HasStableNames")))
+        return [
+            try ExtensionDeclSyntax(
+                extendedType: type,
+                inheritanceClause: declaration.is(ProtocolDeclSyntax.self)
+                    ? nil
+                    : InheritanceClauseSyntax {
+                        InheritedTypeSyntax(type: IdentifierTypeSyntax(name: .identifier("HasStableNames")))
                     }
-                ) {
-                    for decl in try hasStableNamesMembers(for: declaration, in: context) {
-                        decl
-                    }
+            ) {
+                for decl in try hasStableNamesMembers(for: declaration, in: context) {
+                    decl
                 }
-            ]
-        }
+            }
+        ]
     }
     
     static func hasStableNamesMembers(
@@ -103,7 +49,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                             let macroName = attribute.attributeName
                                 .as(IdentifierTypeSyntax.self)?
                                 .name.text
-                            return macroName == "StableName" || macroName == "RemoteDeclaration"
+                            return macroName == "StableName"
                         default:
                             return false
                         }
@@ -119,7 +65,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                             let macroName = attribute.attributeName
                                 .as(IdentifierTypeSyntax.self)?
                                 .name.text
-                            return macroName == "StableName" || macroName == "RemoteDeclaration"
+                            return macroName == "StableName"
                         default:
                             return false
                         }
@@ -194,6 +140,7 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                                             .as(IdentifierPatternSyntax.self)!
                                             .identifier
                                             .text
+                                            + "()"
                                     ),
                                     value: stableName
                                 )

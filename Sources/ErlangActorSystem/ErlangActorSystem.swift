@@ -61,7 +61,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     /// The ``RemoteCallAdapter`` to use for actors that don't specify their own.
-    let defaultRemoteCallAdapter: any RemoteCallAdapter
+    public let remoteCallAdapter: any RemoteCallAdapter
     
     /// Create an actor system with a short node name.
     public init(
@@ -69,7 +69,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         cookie: String,
         remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter()
     ) throws {
-        self.defaultRemoteCallAdapter = remoteCallAdapter
+        self.remoteCallAdapter = remoteCallAdapter
         
         erl_interface.ei_init()
         
@@ -109,7 +109,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         cookie: String,
         remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter()
     ) throws {
-        self.defaultRemoteCallAdapter = remoteCallAdapter
+        self.remoteCallAdapter = remoteCallAdapter
         
         erl_interface.ei_init()
         
@@ -270,6 +270,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         let decoder: TermDecoder
         var index: Int32
         
+        public init(buffer: ErlangTermBuffer, decoder: TermDecoder, index: Int32) {
+            self.buffer = buffer
+            self.decoder = decoder
+            self.index = index
+        }
+        
         public mutating func decodeNextArgument<Argument: Codable>() throws -> Argument {
             defer { buffer.skipTerm(index: &index) }
             return try decoder.decode(Argument.self, from: buffer, startIndex: index)
@@ -294,6 +300,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         let sender: Term.PID?
         let resultHandlerAdapter: (any ResultHandlerAdapter)?
         let fileDescriptor: Int32
+        
+        public init(sender: Term.PID?, resultHandlerAdapter: (any ResultHandlerAdapter)?, fileDescriptor: Int32) {
+            self.sender = sender
+            self.resultHandlerAdapter = resultHandlerAdapter
+            self.fileDescriptor = fileDescriptor
+        }
         
         public func onReturn<Success: Codable>(value: Success) async throws {
             guard let sender,
@@ -378,11 +390,11 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         throwing: Err.Type,
         returning: Res.Type
     ) async throws -> Res where Act: DistributedActor, Err: Error, Act.ID == ActorID, Res: Codable {
-        let targetIdentifier = (actor as? any _HasStableNames)?._stableNames[
+        let targetIdentifier = (actor as? any HasStableNames)?._stableNames[
             String(target.description.split(separator: ".").last!)
         ] ?? target.identifier
         
-        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
+        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? self.remoteCallAdapter
         
         let remoteCall = try remoteCallAdapter.encode(
             RemoteCallInvocation(
@@ -401,32 +413,11 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 ))
             }
             
-            switch actor.id {
-            case let .pid(pid):
-                guard let nodeName = String(cString: [CChar](tuple: pid.pid.node, start: \.0), encoding: .utf8),
-                      let node = self.remoteNodes[nodeName]
-                else { return continuation.resume(throwing: ErlangActorSystemError.remoteCallFailed) }
-                var pid = pid.pid
-                
-                guard ei_send(
-                    node.fileDescriptor,
-                    &pid,
-                    remoteCall.message.buff,
-                    remoteCall.message.index
-                ) >= 0
-                else { return continuation.resume(throwing: ErlangActorSystemError.sendFailed) }
-            case let .name(name, nodeName):
-                guard let node = self.remoteNodes[nodeName]
-                else { return continuation.resume(throwing: ErlangActorSystemError.remoteCallFailed) }
-                
-                guard ei_reg_send(
-                    &self.node,
-                    node.fileDescriptor,
-                    strdup(name),
-                    remoteCall.message.buff,
-                    remoteCall.message.index
-                ) >= 0
-                else { return continuation.resume(throwing: ErlangActorSystemError.sendFailed) }
+            do {
+                try self.send(remoteCall.message, to: actor.id)
+            } catch {
+                continuation.resume(throwing: error)
+                return
             }
             
             if remoteCall.continuationAdapter == nil {
@@ -443,11 +434,11 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         invocation: inout InvocationEncoder,
         throwing: Err.Type
     ) async throws where Act: DistributedActor, Err: Error, Act.ID == ActorID {
-        let targetIdentifier = (actor as? any _HasStableNames)?._stableNames[
+        let targetIdentifier = (actor as? any HasStableNames)?._stableNames[
             String(target.description.split(separator: ".").last!)
         ] ?? target.identifier
         
-        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
+        let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? self.remoteCallAdapter
         
         let remoteCall = try remoteCallAdapter.encode(
             RemoteCallInvocation(
@@ -466,34 +457,11 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 ))
             }
             
-            switch actor.id {
-            case let .pid(pid):
-                guard let nodeName = String(cString: [CChar](tuple: pid.pid.node, start: \.0), encoding: .utf8),
-                      let node = self.remoteNodes[nodeName]
-                else {
-                    return continuation.resume(throwing: ErlangActorSystemError.remoteCallFailed)
-                }
-                var pid = pid.pid
-                
-                guard ei_send(
-                    node.fileDescriptor,
-                    &pid,
-                    remoteCall.message.buff,
-                    remoteCall.message.index
-                ) >= 0
-                else { return continuation.resume(throwing: ErlangActorSystemError.sendFailed) }
-            case let .name(name, nodeName):
-                guard let node = self.remoteNodes[nodeName]
-                else { return continuation.resume(throwing: ErlangActorSystemError.remoteCallFailed) }
-                
-                guard ei_reg_send(
-                    &self.node,
-                    node.fileDescriptor,
-                    strdup(name),
-                    remoteCall.message.buff,
-                    remoteCall.message.index
-                ) >= 0
-                else { return continuation.resume(throwing: ErlangActorSystemError.sendFailed) }
+            do {
+                try self.send(remoteCall.message, to: actor.id)
+            } catch {
+                continuation.resume(throwing: error)
+                return
             }
             
             if remoteCall.continuationAdapter == nil {
@@ -588,6 +556,7 @@ extension ErlangActorSystem {
     }
     
     func handleMessage(fileDescriptor: Int32, message: erlang_msg, buffer: ErlangTermBuffer) async throws {
+        print(buffer)
         let recipient = Term.PID(pid: message.to)
         if recipient == self.pid {
             switch Int32(message.msgtype) {
@@ -644,7 +613,7 @@ extension ErlangActorSystem {
             .flatMap({ id in self.processes.withLock({ $0[id] }) })
                     ?? self.processes.withLock({ $0[.pid(recipient)] })
         {
-            let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? defaultRemoteCallAdapter
+            let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? self.remoteCallAdapter
             let localCall = try remoteCallAdapter.decode(buffer, for: self)
             
             let handler = ResultHandler(
@@ -660,7 +629,7 @@ extension ErlangActorSystem {
                 index: 0
             )
             
-            if let stableNamed = actor as? any _HasStableNames {
+            if let stableNamed = actor as? any HasStableNames {
                 try! await stableNamed._executeStableName(
                     target: RemoteCallTarget(localCall.identifier),
                     invocationDecoder: &invocationDecoder,
@@ -709,5 +678,47 @@ enum ErlangActorSystemError: Error {
 extension Term.Reference {
     public init(for system: ErlangActorSystem) {
         self.init(for: &system.node)
+    }
+}
+
+extension ErlangActorSystem {
+    public func resolve(id: ActorID) -> (any DistributedActor)? {
+        processes.withLock({ $0[id] })
+    }
+    
+    public func send(_ message: ErlangTermBuffer, to id: ActorID) throws {
+        if self.processes.withLock({ $0.keys.contains(id) }) {
+            fatalError("'send(_:to:)' can only be used with remote actor IDs")
+        } else {
+            switch id {
+            case let .pid(pid):
+                guard let nodeName = String(cString: [CChar](tuple: pid.pid.node, start: \.0), encoding: .utf8),
+                      let node = self.remoteNodes[nodeName]
+                else {
+                    throw ErlangActorSystemError.sendFailed
+                }
+                var pid = pid.pid
+                
+                guard ei_send(
+                    node.fileDescriptor,
+                    &pid,
+                    message.buff,
+                    message.index
+                ) >= 0
+                else { throw ErlangActorSystemError.sendFailed }
+            case let .name(name, nodeName):
+                guard let node = self.remoteNodes[nodeName]
+                else { throw ErlangActorSystemError.sendFailed }
+                
+                guard ei_reg_send(
+                    &self.node,
+                    node.fileDescriptor,
+                    strdup(name),
+                    message.buff,
+                    message.index
+                ) >= 0
+                else { throw ErlangActorSystemError.sendFailed }
+            }
+        }
     }
 }

@@ -52,7 +52,7 @@ public enum Term: Sendable, Hashable {
     
     case map([Term:Term])
     
-    func encode(to buffer: inout ErlangTermBuffer, initializeBuffer: Bool = true) throws {
+    func encode(to buffer: ErlangTermBuffer, initializeBuffer: Bool = true) throws {
         if initializeBuffer {
             guard buffer.newWithVersion()
             else { throw TermError.encodingError }
@@ -81,7 +81,7 @@ public enum Term: Sendable, Hashable {
             guard buffer.encode(tupleHeader: terms.count)
             else { throw TermError.encodingError }
             for term in terms {
-                try term.encode(to: &buffer, initializeBuffer: false)
+                try term.encode(to: buffer, initializeBuffer: false)
             }
         case let .list(list) where list.isEmpty:
             guard buffer.encode(listHeader: list.count)
@@ -90,7 +90,7 @@ public enum Term: Sendable, Hashable {
             guard buffer.encode(listHeader: list.count)
             else { throw TermError.encodingError }
             for term in list {
-                try term.encode(to: &buffer, initializeBuffer: false)
+                try term.encode(to: buffer, initializeBuffer: false)
             }
             guard buffer.encodeEmptyList()
             else { throw TermError.encodingError }
@@ -111,8 +111,8 @@ public enum Term: Sendable, Hashable {
             guard buffer.encode(mapHeader: map.count)
             else { throw TermError.encodingError }
             for (key, value) in map {
-                try key.encode(to: &buffer, initializeBuffer: false)
-                try value.encode(to: &buffer, initializeBuffer: false)
+                try key.encode(to: buffer, initializeBuffer: false)
+                try value.encode(to: buffer, initializeBuffer: false)
             }
         case let .string(string):
             guard buffer.encode(string: strdup(string))
@@ -237,9 +237,9 @@ public enum Term: Sendable, Hashable {
     }
     
     public func makeBuffer() throws -> ErlangTermBuffer {
-        var buffer = ErlangTermBuffer()
+        let buffer = ErlangTermBuffer()
         
-        try encode(to: &buffer)
+        try encode(to: buffer)
         
         return buffer
     }
@@ -257,5 +257,17 @@ public enum Term: Sendable, Hashable {
             
             case missingListEnd
         }
+    }
+}
+
+extension Term: Encodable {
+    public func encode(to encoder: any Encoder) throws {
+        fatalError("Term can only be encoded by 'TermEncoder'")
+    }
+}
+
+extension Term: Decodable {
+    public init(from decoder: any Decoder) throws {
+        fatalError("Term can only be decoded by 'TermDecoder'")
     }
 }

@@ -167,11 +167,13 @@ defmodule Counter do
 end
 ```
 
-To interface with these GenServers, create a protocol in Swift to describe the available functions:
+To interface with these GenServers, create a protocol in Swift.
+Add the `Resolvable` and `StableName` macros. You must declare a conformance to `HasStableNames` manually.
 
 ```swift
+@Resolvable
 @StableNames
-protocol Counter: DistributedActor where ActorSystem == ErlangActorSystem {
+protocol Counter: DistributedActor, HasStableNames where ActorSystem == ErlangActorSystem {
     @StableName("count")
     distributed var count: Int { get }
 
@@ -183,11 +185,11 @@ protocol Counter: DistributedActor where ActorSystem == ErlangActorSystem {
 }
 ```
 
-A concrete actor implementing this protocol called `RemoteActor` will be created.
+A concrete actor implementing this protocol called `$Counter` will be created.
 Use this implementation to resolve the remote actor.
 
 ```swift
-let counter = try (any Counter).RemoteActor.resolve(
+let counter: some Counter = try $Counter.resolve(
     id: .name("counter", node: "iex@hostname"),
     using: actorSystem
 )

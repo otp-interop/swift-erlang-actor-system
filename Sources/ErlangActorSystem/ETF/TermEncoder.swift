@@ -54,20 +54,31 @@ open class TermEncoder {
     
     /// Encode `value` to ``erlang/ErlangTermBuffer``.
     open func encode<T: Encodable>(_ value: T) throws -> ErlangTermBuffer {
-        let encoder = __TermEncoder(options: self.options, context: self.context, codingPathDepth: 0)
-        
-        try value.encode(to: encoder)
-        let valueBuffer = encoder.storage.popReference().backing.buffer
-        
-        let buffer = ErlangTermBuffer()
-        if includeVersion {
-            buffer.newWithVersion()
+        if let term = value as? Term {
+            let buffer = ErlangTermBuffer()
+            if includeVersion {
+                buffer.newWithVersion()
+            } else {
+                buffer.new()
+            }
+            try term.encode(to: buffer, initializeBuffer: false)
+            return buffer
         } else {
-            buffer.new()
+            let encoder = __TermEncoder(options: self.options, context: self.context, codingPathDepth: 0)
+            
+            try value.encode(to: encoder)
+            let valueBuffer = encoder.storage.popReference().backing.buffer
+            
+            let buffer = ErlangTermBuffer()
+            if includeVersion {
+                buffer.newWithVersion()
+            } else {
+                buffer.new()
+            }
+            buffer.append(valueBuffer)
+            
+            return buffer
         }
-        buffer.append(valueBuffer)
-        
-        return buffer
     }
 }
 
@@ -741,10 +752,16 @@ extension __TermEncoder {
         _ value: Encodable, for codingPath: [CodingKey],
         _ additionalKey: (some CodingKey)? = AnyCodingKey?.none
     ) throws -> TermReference {
-        return try self._wrapGeneric({
-            try value.encode(to: $0)
-        }, for: codingPath, additionalKey)
-        ?? .init(.map([:], strategy: keyedContainerEncodingStrategy))
+        if let term = value as? Term {
+            return try TermReference {
+                try term.encode(to: $0)
+            }
+        } else {
+            return try self._wrapGeneric({
+                try value.encode(to: $0)
+            }, for: codingPath, additionalKey)
+            ?? .init(.map([:], strategy: keyedContainerEncodingStrategy))
+        }
     }
     
     fileprivate func _wrapGeneric(

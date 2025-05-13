@@ -264,7 +264,7 @@ struct SyncGroup: Codable {
         var container = encoder.unkeyedContainer()
         context.unkeyedContainerEncodingStrategy = oldStrategy
         
-        try container.encode(self.group)
+        try container.encode(self.$group)
         try container.encode(self.processes)
     }
 }
@@ -301,6 +301,18 @@ extension ProcessGroups {
             let local = Set(pg.state.local.filter({ $0.value.contains(group) }).keys)
             let remote = Set(pg.state.remote.values.flatMap({ $0[group, default: []] }))
             return local.union(remote)
+        } ?? []
+    }
+    
+    /// List all remote members of a group.
+    public static func remoteMembers(
+        scope: String = "pg",
+        group: String,
+        using actorSystem: ActorSystem
+    ) async throws -> Set<ActorSystem.ActorID> {
+        let group = AtomTermEncoding(wrappedValue: group)
+        return try await resolve(scope: scope, using: actorSystem) { pg in
+            return Set(pg.state.remote.values.flatMap({ $0[group, default: []] }))
         } ?? []
     }
     

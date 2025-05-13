@@ -189,6 +189,9 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
                 let arguments = message[argumentsStartIndex...tupleStartIndex]
                 
                 let identifier = String(cString: target, encoding: .utf8)!
+                print("=== CALL ===")
+                print(identifier)
+                print(arguments)
                 return LocalCallInvocation(
                     sender: sender,
                     identifier: identifier,

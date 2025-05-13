@@ -5,16 +5,13 @@ public macro StableName(_ name: StaticString, mangledName: StaticString? = nil) 
 
 @attached(
     extension,
-    conformances: _HasStableNames,
+    conformances: HasStableNames,
     names: named(_executeStableName), named(_stableNames), named(RemoteActor)
 )
 @attached(peer, names: prefixed(_RemoteActorFor))
 public macro StableNames() = #externalMacro(module: "DistributedMacros", type: "StableNames")
 
-@attached(body)
-public macro RemoteDeclaration(_ name: StaticString) = #externalMacro(module: "DistributedMacros", type: "RemoteDeclaration")
-
-public protocol _HasStableNames: Actor {
+public protocol HasStableNames: Actor {
     nonisolated func _executeStableName(
         target: RemoteCallTarget,
         invocationDecoder: inout ErlangActorSystem.InvocationDecoder,

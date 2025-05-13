@@ -25,14 +25,18 @@ open class TermDecoder {
     public init() {}
 
     open func decode<T: Decodable>(_ type: T.Type, from buffer: ErlangTermBuffer, startIndex: Int32 = 0) throws -> T {
-        let decoder = __TermDecoder(
-            userInfo: userInfo,
-            from: buffer,
-            codingPath: [],
-            options: self.options,
-            startIndex: startIndex
-        )
-        return try type.init(from: decoder)
+        if type == Term.self {
+            return try Term(from: buffer[startIndex...]) as! T
+        } else {
+            let decoder = __TermDecoder(
+                userInfo: userInfo,
+                from: buffer,
+                codingPath: [],
+                options: self.options,
+                startIndex: startIndex
+            )
+            return try type.init(from: decoder)
+        }
     }
 }
 
@@ -232,7 +236,13 @@ extension __TermDecoder: SingleValueDecodingContainer {
     }
 
     func decode<T>(_ type: T.Type) throws -> T where T: Decodable {
-        try type.init(from: self)
+        if type == Term.self {
+            let termStartIndex = index
+            buffer.skipTerm(index: &index)
+            return try Term(from: buffer[termStartIndex..<index]) as! T
+        } else {
+            return try type.init(from: self)
+        }
     }
 }
 
