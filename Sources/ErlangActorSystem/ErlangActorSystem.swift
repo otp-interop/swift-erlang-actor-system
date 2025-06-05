@@ -7,23 +7,17 @@ import Synchronization
 public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendable {
     /// The resolved node name.
     public var name: String {
-        String(
-            cString: [CChar](tuple: node.thisnodename, start: \.0),
-            encoding: .utf8
-        )!
+        transport.name
     }
     
     /// The connection cookie set on this actor system.
     public var cookie: String {
-        String(
-            cString: [CChar](tuple: node.ei_connect_cookie, start: \.0),
-            encoding: .utf8
-        )!
+        transport.cookie
     }
     
-    var node = ei_cnode()
+    var transport: any Transport
     
-    private(set) var port: Int32 = 0
+    private(set) var port: Int = 0
     
     private(set) var reservedProcesses = Set<ActorID>()
     private let processes = Mutex<[ActorID:any DistributedActor]>([:])
@@ -46,7 +40,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public var pid: Term.PID {
-        Term.PID(pid: node.`self`)
+        transport.pid
     }
     
     var acceptTask: Task<(), Never>?
@@ -67,32 +61,26 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     public init(
         name: String,
         cookie: String,
-        remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter()
-    ) throws {
+        remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter(),
+        transport: any Transport = ErlInterfaceTransport()
+    ) async throws {
         self.remoteCallAdapter = remoteCallAdapter
         
-        erl_interface.ei_init()
+        self.transport = transport
+        try await self.transport.setup(name: name, cookie: cookie)
         
-        guard ei_connect_init(&node, name, cookie, UInt32(time(nil) + 1)) >= 0
-        else { throw ErlangActorSystemError.initFailed }
+        let (listen, port) = try await self.transport.listen(port: self.port)
+        self.port = port
         
-        let listenDescriptor = ei_listen(&node, &port, 5)
-        guard listenDescriptor > 0
-        else { throw ErlangActorSystemError.listenFailed }
-        
-        guard ei_publish(&node, port) != -1
-        else { throw ErlangActorSystemError.publishFailed }
+        try await self.transport.publish(port: port)
         
         acceptTask = Task.detached { [weak self] in
             while true {
                 guard let self else { continue }
-                var conn = ErlConnect()
-                let fileDescriptor = ei_accept(&node, listenDescriptor, &conn)
-                guard fileDescriptor >= 0,
-                      let nodeName = String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)
+                guard let (accept, nodeName) = try? await self.transport.accept(from: listen)
                 else { continue }
                 let node = RemoteNode(
-                    fileDescriptor: fileDescriptor,
+                    socket: accept,
                     onReceive: handleMessage
                 )
                 await self.nodeReady(node, name: nodeName)
@@ -102,47 +90,31 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     
     /// Create an actor system with a full name and IP address.
     public init(
-        hostname: String,
-        alivename: String,
-        nodename: String,
-        ip: String,
+        hostName: String,
+        aliveName: String,
+        nodeName: String,
+        ipAddress: String,
         cookie: String,
-        remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter()
-    ) throws {
+        remoteCallAdapter: any RemoteCallAdapter = GenServerRemoteCallAdapter(),
+        transport: any Transport = ErlInterfaceTransport()
+    ) async throws {
         self.remoteCallAdapter = remoteCallAdapter
         
-        erl_interface.ei_init()
+        self.transport = transport
+        try await self.transport.setup(hostName: hostName, aliveName: aliveName, nodeName: nodeName, ipAddress: ipAddress, cookie: cookie)
         
-        var addr = in_addr()
-        inet_aton("127.0.0.1", &addr)
-        guard ei_connect_xinit(
-            &node,
-            hostname,
-            alivename,
-            nodename,
-            &addr,
-            cookie,
-            1
-        ) >= 0
-        else { throw ErlangActorSystemError.initFailed }
+        let (listen, port) = try await self.transport.listen(port: self.port)
+        self.port = port
         
-        let listenDescriptor = ei_listen(&node, &port, 5)
-        guard listenDescriptor > 0
-        else { throw ErlangActorSystemError.listenFailed }
-        
-        guard ei_publish(&node, port) != -1
-        else { throw ErlangActorSystemError.publishFailed }
+        try await self.transport.publish(port: port)
         
         acceptTask = Task.detached { [weak self] in
             while true {
                 guard let self else { continue }
-                var conn = ErlConnect()
-                let fileDescriptor = ei_accept(&node, listenDescriptor, &conn)
-                guard fileDescriptor >= 0,
-                      let nodeName = String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)
+                guard let (accept, nodeName) = try? await self.transport.accept(from: listen)
                 else { continue }
                 let node = RemoteNode(
-                    fileDescriptor: fileDescriptor,
+                    socket: accept,
                     onReceive: handleMessage
                 )
                 await self.nodeReady(node, name: nodeName)
@@ -216,8 +188,11 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 
                 context.unkeyedContainerEncodingStrategy = oldStrategy
                 
+                let oldStringStrategy = context.stringEncodingStrategy
+                context.stringEncodingStrategy = .atom
                 try container.encode(name)
                 try container.encode(node)
+                context.stringEncodingStrategy = oldStringStrategy
             }
         }
         
@@ -378,6 +353,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public func actorReady<Act>(_ actor: Act) where Act: DistributedActor, Act.ID == ActorID {
+        print("actorReady: \(actor.id)")
         self.processes.withLock {
             $0[actor.id] = actor
         }
@@ -471,9 +447,10 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public func assignID<Act>(_ actorType: Act.Type) -> ActorID where Act : DistributedActor, Act.ID == ActorID {
-        var pid = erlang_pid()
-        ei_make_pid(&node, &pid)
-        let id = ActorID.pid(Term.PID(pid: pid))
+        print("assignID: \(actorType)")
+        let pid = self.transport.makePID()
+        let id = ActorID.pid(pid)
+        print("assignID: \(id)")
         self.reservedProcesses.insert(id)
         return id
     }
@@ -498,18 +475,18 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
 
 extension ErlangActorSystem {
     struct RemoteNode {
-        let fileDescriptor: Int32
+        let socket: (any Transport).AcceptSocket
         let messageTask: Task<(), Never>
         
-        init(fileDescriptor: Int32, onReceive: sending @escaping (Int32, erlang_msg, ErlangTermBuffer) async throws -> ()) {
-            self.fileDescriptor = fileDescriptor
+        init(socket: (any Transport).AcceptSocket, onReceive: sending @escaping (Int32, erlang_msg, ErlangTermBuffer) async throws -> ()) {
+            self.socket = socket
             self.messageTask = Task.detached {
                 while true {
                     var message = erlang_msg()
                     let buffer = ErlangTermBuffer()
                     buffer.new()
                     
-                    switch ei_xreceive_msg(fileDescriptor, &message, &buffer.buffer) {
+                    switch ei_xreceive_msg(socket, &message, &buffer.buffer) {
                     case ERL_TICK:
                         continue
                     case ERL_ERROR:
@@ -517,7 +494,7 @@ extension ErlangActorSystem {
                     case ERL_MSG:
                         var index: Int32 = 0
                         ei_print_term(stdout, buffer.buff, &index)
-                        try! await onReceive(fileDescriptor, message, buffer)
+                        try! await onReceive(socket, message, buffer)
                     case let messageKind:
                         print("=== UNKNOWN MESSAGE KIND \(messageKind) ===")
                         print(message)
@@ -531,26 +508,18 @@ extension ErlangActorSystem {
     
     /// Establishes a connection between this node and a remote node.
     public func connect(to nodeName: String) async throws {
-        let fileDescriptor = ei_connect(&node, strdup(nodeName))
+        let socket = try await self.transport.connect(to: nodeName)
         
-        guard fileDescriptor >= 0
-        else { throw ErlangActorSystemError.connectionFailed }
-        
-        let connection = RemoteNode(fileDescriptor: fileDescriptor, onReceive: handleMessage)
+        let connection = RemoteNode(socket: socket, onReceive: handleMessage)
         
         await self.nodeReady(connection, name: nodeName)
     }
     
     /// Establishes a connection between this node and a remote node.
     public func connect(to ip: String, port: Int) async throws {
-        var addr = in_addr()
-        inet_aton(strdup(ip), &addr)
-        let fileDescriptor = ei_xconnect_host_port(&node, &addr, Int32(port))
+        let socket = try await self.transport.connect(to: ip, port: port)
         
-        guard fileDescriptor >= 0
-        else { throw ErlangActorSystemError.connectionFailed }
-        
-        let connection = RemoteNode(fileDescriptor: fileDescriptor, onReceive: handleMessage)
+        let connection = RemoteNode(socket: socket, onReceive: handleMessage)
         
         await self.nodeReady(connection, name: "\(ip):\(port)")
     }
@@ -677,7 +646,7 @@ enum ErlangActorSystemError: Error {
 
 extension Term.Reference {
     public init(for system: ErlangActorSystem) {
-        self.init(for: &system.node)
+        self = system.transport.makeReference()
     }
 }
 
@@ -697,27 +666,13 @@ extension ErlangActorSystem {
                 else {
                     throw ErlangActorSystemError.sendFailed
                 }
-                var pid = pid.pid
                 
-                guard ei_send(
-                    node.fileDescriptor,
-                    &pid,
-                    message.buff,
-                    message.index
-                ) >= 0
-                else { throw ErlangActorSystemError.sendFailed }
+                try self.transport.send(message, to: pid, on: node.socket)
             case let .name(name, nodeName):
                 guard let node = self.remoteNodes[nodeName]
                 else { throw ErlangActorSystemError.sendFailed }
                 
-                guard ei_reg_send(
-                    &self.node,
-                    node.fileDescriptor,
-                    strdup(name),
-                    message.buff,
-                    message.index
-                ) >= 0
-                else { throw ErlangActorSystemError.sendFailed }
+                try self.transport.send(message, to: name, on: node.socket)
             }
         }
     }
