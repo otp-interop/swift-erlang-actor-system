@@ -26,8 +26,6 @@ public struct ErlInterfaceTransport: Transport {
     public init(
         backlog: Int = 5
     ) {
-        CErlInterface.ei_init()
-        
         self.backlog = backlog
     }
     

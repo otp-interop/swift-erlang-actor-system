@@ -1,0 +1,24 @@
+name: Swift
+
+on: [push]
+
+jobs:
+  build:
+    name: Swift ${{ matrix.swift }} on ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        swift: ["6.1"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: swift-actions/setup-swift@65540b95f51493d65f5e59e97dcef9629ddf11bf
+        with:
+          swift-version: ${{ matrix.swift }}
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build
+      - name: Run ETF tests
+        run: swift test --filter ErlangActorSystemTests.ETFTests.
+      - name: Run ErlangActorSystem tests
+        # isolate test runs to avoid deadlocks
+        run: swift test list | grep ErlangActorSystemTests.ErlangActorSystemTests. | xargs -n 1 swift test --filter

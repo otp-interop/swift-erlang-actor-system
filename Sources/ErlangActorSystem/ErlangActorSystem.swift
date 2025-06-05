@@ -5,6 +5,31 @@ import Synchronization
 /// An actor system manages an Erlang C node, which can contain many processes
 /// (actors).
 public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendable {
+    /// A description of a message sent over Erlang distribution.
+    public struct Message: Sendable {
+        public let type: MessageType?
+        public let sender: Term.PID
+        public let recipient: Term.PID
+        
+        public enum MessageType: Int, Sendable {
+            case link = 1
+            case send = 2
+            case exit = 3
+            case unlink = 4
+            case nodeLink = 5
+            case registeredSend = 6
+            case groupLeader = 7
+            case exit2 = 8
+            case passThrough = 112 // 'p'
+        }
+    }
+    
+    /// The current message being handled by the actor system.
+    ///
+    /// This value is only set inside of distributed functions/accessors.
+    @TaskLocal
+    public static var message: Message?
+    
     /// The resolved node name.
     public var name: String {
         transport.name
@@ -72,7 +97,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         let (listen, port) = try await self.transport.listen(port: self.port)
         self.port = port
         
-        try await self.transport.publish(port: port)
+        try? await self.transport.publish(port: port)
         
         acceptTask = Task.detached { [weak self] in
             while true {
@@ -353,7 +378,6 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public func actorReady<Act>(_ actor: Act) where Act: DistributedActor, Act.ID == ActorID {
-        print("actorReady: \(actor.id)")
         self.processes.withLock {
             $0[actor.id] = actor
         }
@@ -447,10 +471,8 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public func assignID<Act>(_ actorType: Act.Type) -> ActorID where Act : DistributedActor, Act.ID == ActorID {
-        print("assignID: \(actorType)")
         let pid = self.transport.makePID()
         let id = ActorID.pid(pid)
-        print("assignID: \(id)")
         self.reservedProcesses.insert(id)
         return id
     }
@@ -598,19 +620,25 @@ extension ErlangActorSystem {
                 index: 0
             )
             
-            if let stableNamed = actor as? any HasStableNames {
-                try! await stableNamed._executeStableName(
-                    target: RemoteCallTarget(localCall.identifier),
-                    invocationDecoder: &invocationDecoder,
-                    handler: handler
-                )
-            } else {
-                try! await self.executeDistributedTarget(
-                    on: actor,
-                    target: RemoteCallTarget(localCall.identifier),
-                    invocationDecoder: &invocationDecoder,
-                    handler: handler
-                )
+            try! await ErlangActorSystem.$message.withValue(Message(
+                type: Message.MessageType(rawValue: message.msgtype),
+                sender: Term.PID(pid: message.from),
+                recipient: Term.PID(pid: message.to)
+            )) {
+                if let stableNamed = actor as? any HasStableNames {
+                    try await stableNamed._executeStableName(
+                        target: RemoteCallTarget(localCall.identifier),
+                        invocationDecoder: &invocationDecoder,
+                        handler: handler
+                    )
+                } else {
+                    try await self.executeDistributedTarget(
+                        on: actor,
+                        target: RemoteCallTarget(localCall.identifier),
+                        invocationDecoder: &invocationDecoder,
+                        handler: handler
+                    )
+                }
             }
         } else {
             print("=== UNKNOWN ACTOR MESSAGE ===")

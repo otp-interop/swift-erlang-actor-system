@@ -27,12 +27,6 @@ let package = Package(
             ]
         ),
     
-//        .binaryTarget(
-//            name: "erl_interface",
-//            url: "https://github.com/otp-interop/elixir_pack/releases/download/27.3.3/erl_interface.xcframework.zip",
-//            checksum: "330d39525666391be596268b0725387974ebf00e6430b0394512573a229c91a8"
-//        ),
-    
         .macro(
             name: "DistributedMacros",
             dependencies: [
