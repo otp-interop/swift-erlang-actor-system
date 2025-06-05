@@ -11,9 +11,9 @@ jobs:
         swift: ["6.1"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: vapor/swiftly-action@v0.2
+      - uses: swift-actions/setup-swift@v2
         with:
-          toolchain: ${{ matrix.swift }}
+          swift-version: ${{ matrix.swift }}
       - uses: actions/checkout@v4
         with:
           submodules: true
