@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 
 extension Term {
     /// A function that can be sent between nodes and executed on that node.

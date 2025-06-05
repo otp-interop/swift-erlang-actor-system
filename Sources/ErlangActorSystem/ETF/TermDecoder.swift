@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 import Foundation
 
 /// A type that decodes `Term` to a `Decodable` type.

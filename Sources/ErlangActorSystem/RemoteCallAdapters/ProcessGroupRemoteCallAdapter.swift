@@ -1,5 +1,5 @@
 import Distributed
-import erl_interface
+import CErlInterface
 
 /// An adapter that handles messages from a [process group](https://www.erlang.org/doc/apps/kernel/pg.html).
 ///

@@ -1,7 +1,7 @@
 import Testing
 import Foundation
 @testable import ErlangActorSystem
-import erl_interface
+import CErlInterface
 
 @Suite("Erlang Term Format Tests") struct ETFTests {
     @Test func codable() throws {

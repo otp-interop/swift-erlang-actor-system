@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 
 public final class ErlangTermBuffer {
     var buffer: ei_x_buff = ei_x_buff()

@@ -329,7 +329,7 @@ import Foundation
     }
 }
 
-import erl_interface
+import CErlInterface
 
 /// ```elixir
 /// {:forward_to_local, "<topic>", <message>, <dispatcher>}

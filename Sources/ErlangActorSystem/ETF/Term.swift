@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 import Observation
 import Foundation
 import Combine

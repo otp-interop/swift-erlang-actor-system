@@ -22,16 +22,16 @@ let package = Package(
         .target(
             name: "ErlangActorSystem",
             dependencies: [
-                "erl_interface",
+                "CErlInterface",
                 "DistributedMacros"
             ]
         ),
     
-        .binaryTarget(
-            name: "erl_interface",
-            url: "https://github.com/otp-interop/elixir_pack/releases/download/27.3.3/erl_interface.xcframework.zip",
-            checksum: "330d39525666391be596268b0725387974ebf00e6430b0394512573a229c91a8"
-        ),
+//        .binaryTarget(
+//            name: "erl_interface",
+//            url: "https://github.com/otp-interop/elixir_pack/releases/download/27.3.3/erl_interface.xcframework.zip",
+//            checksum: "330d39525666391be596268b0725387974ebf00e6430b0394512573a229c91a8"
+//        ),
     
         .macro(
             name: "DistributedMacros",
@@ -44,6 +44,24 @@ let package = Package(
         .testTarget(
             name: "ErlangActorSystemTests",
             dependencies: ["ErlangActorSystem"]
+        ),
+
+        .target(
+            name: "CErlInterface",
+            exclude: ["erl_interface/test", "erl_interface/src/prog"],
+            publicHeadersPath: "erl_interface/include",
+            cSettings: [
+                .headerSearchPath("include"),
+                .headerSearchPath("erl_interface/include"),
+                .headerSearchPath("erl_interface/src/openssl/include"),
+                .headerSearchPath("erl_interface/src/connect"),
+                .headerSearchPath("erl_interface/src/misc"),
+                .headerSearchPath("erl_interface/src/epmd"),
+
+                .define("ERLANG_OPENSSL_INTEGRATION"),
+
+                .define("HAVE_SOCKLEN_T")
+            ]
         ),
     ]
 )

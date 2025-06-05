@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 import Foundation
 
 /// An adapter that handles messages as a [`GenServer`](https://hexdocs.pm/elixir/GenServer.html).

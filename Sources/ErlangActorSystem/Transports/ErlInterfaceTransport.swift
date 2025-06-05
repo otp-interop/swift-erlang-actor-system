@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 
 public struct ErlInterfaceTransport: Transport {
     private var node: ei_cnode = ei_cnode()
@@ -26,7 +26,7 @@ public struct ErlInterfaceTransport: Transport {
     public init(
         backlog: Int = 5
     ) {
-        erl_interface.ei_init()
+        CErlInterface.ei_init()
         
         self.backlog = backlog
     }

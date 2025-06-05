@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 import Foundation
 
 // Based on `JSONEncoder` from `apple/swift-foundation`

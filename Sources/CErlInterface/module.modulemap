@@ -1,0 +1,4 @@
+module CErlInterface [system] {
+    umbrella "erl_interface/include"
+    export *
+}

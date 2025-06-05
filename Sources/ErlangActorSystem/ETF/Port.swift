@@ -1,4 +1,4 @@
-import erl_interface
+import CErlInterface
 
 extension Term {
     public struct Port: Sendable, Hashable, Codable {
