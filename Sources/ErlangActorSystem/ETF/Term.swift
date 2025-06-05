@@ -1,7 +1,6 @@
 import CErlInterface
 import Observation
 import Foundation
-import Combine
 
 extension Array {
     init<Tuple>(tuple: Tuple, start: KeyPath<Tuple, Element>) {
