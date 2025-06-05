@@ -1,4 +1,7 @@
 import CErlInterface
+#if canImport(Glibc)
+import Glibc
+#endif
 
 public struct ErlInterfaceTransport: Transport {
     private var node: ei_cnode = ei_cnode()

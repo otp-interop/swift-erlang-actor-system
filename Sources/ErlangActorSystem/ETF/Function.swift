@@ -1,4 +1,7 @@
 import CErlInterface
+#if canImport(Glibc)
+import Glibc
+#endif
 
 extension Term {
     /// A function that can be sent between nodes and executed on that node.

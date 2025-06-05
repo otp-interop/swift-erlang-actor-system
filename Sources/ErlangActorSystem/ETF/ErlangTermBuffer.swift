@@ -1,4 +1,7 @@
 import CErlInterface
+#if canImport(Glibc)
+import Glibc
+#endif
 
 public final class ErlangTermBuffer {
     var buffer: ei_x_buff = ei_x_buff()

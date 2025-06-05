@@ -1,6 +1,9 @@
 import CErlInterface
 import Observation
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#endif
 
 extension Array {
     init<Tuple>(tuple: Tuple, start: KeyPath<Tuple, Element>) {

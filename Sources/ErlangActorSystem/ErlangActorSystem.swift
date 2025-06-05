@@ -1,6 +1,9 @@
 import CErlInterface
 import Distributed
 import Synchronization
+#if canImport(Glibc)
+import Glibc
+#endif
 
 /// An actor system manages an Erlang C node, which can contain many processes
 /// (actors).

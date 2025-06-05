@@ -1,5 +1,8 @@
 import CErlInterface
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#endif
 
 // Based on `JSONEncoder` from `apple/swift-foundation`
 // Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors
