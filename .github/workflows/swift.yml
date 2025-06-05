@@ -11,10 +11,12 @@ jobs:
         swift: ["6.1"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: swift-actions/setup-swift@next
+      - uses: vapor/swiftly-action@v0.2
         with:
-          swift-version: ${{ matrix.swift }}
+          toolchain: ${{ matrix.swift }}
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Build
         run: swift build
       - name: Run ETF tests
