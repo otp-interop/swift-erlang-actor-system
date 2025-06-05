@@ -517,8 +517,6 @@ extension ErlangActorSystem {
                     case ERL_ERROR:
                         continue
                     case ERL_MSG:
-                        var index: Int32 = 0
-                        ei_print_term(stdout, buffer.buff, &index)
                         try! await onReceive(socket, message, buffer)
                     case let messageKind:
                         print("=== UNKNOWN MESSAGE KIND \(messageKind) ===")
