@@ -5,6 +5,7 @@ on: [push]
 jobs:
   build:
     name: Swift ${{ matrix.swift }} on ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
         os: [ubuntu-latest]
