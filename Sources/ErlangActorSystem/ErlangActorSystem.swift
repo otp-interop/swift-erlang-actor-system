@@ -548,7 +548,6 @@ extension ErlangActorSystem {
     }
     
     func handleMessage(fileDescriptor: Int32, message: erlang_msg, buffer: ErlangTermBuffer) async throws {
-        print(buffer)
         let recipient = Term.PID(pid: message.to)
         if recipient == self.pid {
             switch Int32(message.msgtype) {

@@ -14,9 +14,14 @@ jobs:
       - uses: vapor/swiftly-action@v0.2
         with:
           toolchain: ${{ matrix.swift }}
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: '28'
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Start EPMD
+        run: epmd -daemon
       - name: Build
         run: swift build
       - name: Run ETF tests
