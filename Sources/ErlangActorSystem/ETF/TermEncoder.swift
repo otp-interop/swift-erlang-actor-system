@@ -439,7 +439,9 @@ final class TermReference {
                     case .atom:
                         buffer.encode(atom: key)
                     case .charlist:
-                        buffer.encode(string: strdup(key))
+                        _ = key.withCString { key in
+                            buffer.encode(string: key)
+                        }
                     }
                     
                     buffer.append(value.backing.buffer)
@@ -734,8 +736,10 @@ extension __TermEncoder {
                 guard buffer.encode(atom: value)
                 else { throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: codingPath, debugDescription: "Failed to encode \(value)")) }
             case .charlist:
-                guard buffer.encode(string: strdup(value))
-                else { throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: codingPath, debugDescription: "Failed to encode \(value)")) }
+                try value.withCString { value in
+                    guard buffer.encode(string: value)
+                    else { throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: codingPath, debugDescription: "Failed to encode \(value)")) }
+                }
             }
         }
     }

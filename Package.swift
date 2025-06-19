@@ -39,6 +39,14 @@ let package = Package(
             name: "ErlangActorSystemTests",
             dependencies: ["ErlangActorSystem"]
         ),
+        
+        .executableTarget(
+            name: "ErlangActorSystemBenchmarks",
+            dependencies: [
+                "ErlangActorSystem"
+            ],
+            path: "Tests/ErlangActorSystemBenchmarks"
+        ),
 
         .target(
             name: "CErlInterface",

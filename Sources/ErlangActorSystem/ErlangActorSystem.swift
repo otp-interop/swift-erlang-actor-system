@@ -47,7 +47,6 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     
     private(set) var port: Int = 0
     
-    private(set) var reservedProcesses = Set<ActorID>()
     private let processes = Mutex<[ActorID:any DistributedActor]>([:])
     private(set) var registeredNames = [String:ActorID]()
     
@@ -180,8 +179,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                 buffer.encode(pid: &pid.pid)
             case let .name(name, nodeName):
                 buffer.encode(tupleHeader: 2)
-                buffer.encode(atom: strdup(name))
-                buffer.encode(atom: strdup(nodeName))
+                _ = name.withCString { name in
+                    buffer.encode(atom: name)
+                }
+                _ = nodeName.withCString { nodeName in
+                    buffer.encode(atom: nodeName)
+                }
             }
         }
         
@@ -476,12 +479,10 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     public func assignID<Act>(_ actorType: Act.Type) -> ActorID where Act : DistributedActor, Act.ID == ActorID {
         let pid = self.transport.makePID()
         let id = ActorID.pid(pid)
-        self.reservedProcesses.insert(id)
         return id
     }
     
     public func resignID(_ id: ActorID) {
-        self.reservedProcesses.remove(id)
         _ = self.processes.withLock({
             $0.removeValue(forKey: id)
         })

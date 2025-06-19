@@ -68,8 +68,10 @@ public enum Term: Sendable, Hashable {
             guard buffer.encode(double: double)
             else { throw TermError.encodingError }
         case let .atom(atom):
-            guard buffer.encode(atom: strdup(atom))
-            else { throw TermError.encodingError }
+            try atom.withCString { atom in
+                guard buffer.encode(atom: atom)
+                else { throw TermError.encodingError }
+            }
         case var .ref(ref):
             guard buffer.encode(ref: &ref.ref)
             else { throw TermError.encodingError }
@@ -117,8 +119,10 @@ public enum Term: Sendable, Hashable {
                 try value.encode(to: buffer, initializeBuffer: false)
             }
         case let .string(string):
-            guard buffer.encode(string: strdup(string))
-            else { throw TermError.encodingError }
+            try string.withCString { string in
+                guard buffer.encode(string: string)
+                else { throw TermError.encodingError }
+            }
         }
     }
     

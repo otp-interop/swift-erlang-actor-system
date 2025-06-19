@@ -17,7 +17,10 @@ extension Term {
         public func hash(into hasher: inout Hasher) {
             hasher.combine(port.creation)
             hasher.combine(port.id)
-            hasher.combine(Array(tuple: port.node, start: \.0))
+            var node = port.node
+            withUnsafeBytes(of: &node) { pointer in
+                hasher.combine(bytes: pointer)
+            }
         }
         
         public init(from decoder: any Decoder) throws {

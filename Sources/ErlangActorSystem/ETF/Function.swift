@@ -286,17 +286,19 @@ extension Term {
             _ function: String,
             _ arity: Int
         ) {
-            self.fun = erlang_fun(
-                arity: arity,
-                module: module.tuple(),
-                type: EI_FUN_EXPORT,
-                u: .init(
-                    exprt: .init(
-                        func: strdup(function),
-                        func_allocated: 0
+            self.fun = function.withCString { function in
+                erlang_fun(
+                    arity: arity,
+                    module: module.tuple(),
+                    type: EI_FUN_EXPORT,
+                    u: .init(
+                        exprt: .init(
+                            func: UnsafeMutablePointer(mutating: function),
+                            func_allocated: 0
+                        )
                     )
                 )
-            )
+            }
         }
         
         deinit {
@@ -320,7 +322,10 @@ extension Term {
                 hasher.combine(fun.u.closure.old_index)
                 hasher.combine(fun.u.closure.old_index)
                 hasher.combine(fun.u.closure.uniq)
-                hasher.combine(Array(tuple: fun.u.closure.md5, start: \.0))
+                var md5 = fun.u.closure.md5
+                withUnsafeBytes(of: &md5) { pointer in
+                    hasher.combine(bytes: pointer)
+                }
                 hasher.combine(PID(pid: fun.u.closure.pid))
             } else {
                 hasher.combine(String(cString: fun.u.exprt.func, encoding: .utf8))

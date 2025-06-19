@@ -19,7 +19,10 @@ extension Term {
             hasher.combine(pid.creation)
             hasher.combine(pid.num)
             hasher.combine(pid.serial)
-            hasher.combine(Array(tuple: pid.node, start: \.0))
+            var node = pid.node
+            withUnsafeBytes(of: &node) { pointer in
+                hasher.combine(bytes: pointer)
+            }
         }
         
         public init(from decoder: any Decoder) throws {

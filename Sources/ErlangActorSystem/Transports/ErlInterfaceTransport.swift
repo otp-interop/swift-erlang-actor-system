@@ -81,7 +81,9 @@ public struct ErlInterfaceTransport: Transport {
     }
     
     public mutating func connect(to nodeName: String) throws -> AcceptSocket {
-        let fileDescriptor = ei_connect(&node, strdup(nodeName))
+        let fileDescriptor = nodeName.withCString { nodeName in
+            ei_connect(&node, UnsafeMutablePointer(mutating: nodeName))
+        }
         guard fileDescriptor >= 0
         else { throw TransportError.connectFailed }
         return fileDescriptor
@@ -89,7 +91,9 @@ public struct ErlInterfaceTransport: Transport {
     
     public mutating func connect(to ipAddress: String, port: Int) throws -> AcceptSocket {
         var addr = in_addr()
-        inet_aton(strdup(ipAddress), &addr)
+        _ = ipAddress.withCString { ipAddress in
+            inet_aton(ipAddress, &addr)
+        }
         let fileDescriptor = ei_xconnect_host_port(&node, &addr, Int32(port))
         
         guard fileDescriptor >= 0
@@ -110,14 +114,16 @@ public struct ErlInterfaceTransport: Transport {
     }
     
     public mutating func send(_ message: ErlangTermBuffer, to name: String, on socket: AcceptSocket) throws {
-        guard ei_reg_send(
-            &self.node,
-            socket,
-            strdup(name),
-            message.buff,
-            message.index
-        ) >= 0
-        else { throw ErlangActorSystemError.sendFailed }
+        try name.withCString { name in
+            guard ei_reg_send(
+                &self.node,
+                socket,
+                UnsafeMutablePointer(mutating: name),
+                message.buff,
+                message.index
+            ) >= 0
+            else { throw ErlangActorSystemError.sendFailed }
+        }
     }
     
     public mutating func makePID() -> Term.PID {
