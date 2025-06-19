@@ -17,12 +17,10 @@ extension Term {
         public func hash(into hasher: inout Hasher) {
             hasher.combine(ref.creation)
             hasher.combine(ref.len)
-            var n = ref.n
-            withUnsafeBytes(of: &n) { pointer in
+            withUnsafeBytes(of: ref.n) { pointer in
                 hasher.combine(bytes: pointer)
             }
-            var node = ref.node
-            withUnsafeBytes(of: &node) { pointer in
+            withUnsafeBytes(of: ref.node) { pointer in
                 hasher.combine(bytes: pointer)
             }
         }

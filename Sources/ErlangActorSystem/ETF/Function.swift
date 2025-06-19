@@ -322,8 +322,7 @@ extension Term {
                 hasher.combine(fun.u.closure.old_index)
                 hasher.combine(fun.u.closure.old_index)
                 hasher.combine(fun.u.closure.uniq)
-                var md5 = fun.u.closure.md5
-                withUnsafeBytes(of: &md5) { pointer in
+                withUnsafeBytes(of: fun.u.closure.md5) { pointer in
                     hasher.combine(bytes: pointer)
                 }
                 hasher.combine(PID(pid: fun.u.closure.pid))

@@ -19,8 +19,7 @@ extension Term {
             hasher.combine(pid.creation)
             hasher.combine(pid.num)
             hasher.combine(pid.serial)
-            var node = pid.node
-            withUnsafeBytes(of: &node) { pointer in
+            withUnsafeBytes(of: pid.node) { pointer in
                 hasher.combine(bytes: pointer)
             }
         }
