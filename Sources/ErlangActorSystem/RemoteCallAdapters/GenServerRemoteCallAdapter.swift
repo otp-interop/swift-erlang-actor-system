@@ -251,7 +251,7 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
         let monitorReference: ErlangTermBuffer
         
         /// `{<ref>, <reply>}`
-        func encode(returning value: Value) throws -> Message {
+        func encode(returning value: Value) throws -> Self.Message {
             let result = ErlangTermBuffer()
             result.newWithVersion()
             
@@ -263,7 +263,7 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
         }
         
         /// `{<ref>, :ok}`
-        func encodeVoid() throws -> Message {
+        func encodeVoid() throws -> Self.Message {
             let result = ErlangTermBuffer()
             result.newWithVersion()
             
@@ -275,7 +275,7 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
         }
         
         /// `{<ref>, {:error, "msg"}}`
-        func encode(throwing error: some Error) throws -> Message {
+        func encode(throwing error: some Error) throws -> Self.Message {
             let result = ErlangTermBuffer()
             result.newWithVersion()
             

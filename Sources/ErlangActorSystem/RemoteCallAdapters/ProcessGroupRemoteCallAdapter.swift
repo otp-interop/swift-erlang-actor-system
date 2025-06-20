@@ -175,7 +175,7 @@ public distributed actor ProcessGroups: HasRemoteCallAdapter {
         
         // send "discover" to all nodes in the cluster
         try await broadcast(
-            to: actorSystem.remoteNodes.keys.map({ .name(scope, node: $0) })
+            to: actorSystem.remoteNodes.withLock { $0.keys.map({ .name(scope, node: $0) }) }
         ) { remote in
             try await remote.discover(self.id)
         }

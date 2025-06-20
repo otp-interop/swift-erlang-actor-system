@@ -79,6 +79,6 @@ public protocol ResultHandlerAdapter {
     func encode(throwing error: some Error) throws -> Message
 }
 
-public protocol ContinuationAdapter {
+public protocol ContinuationAdapter: Sendable {
     func decode(_ message: ErlangTermBuffer) throws -> Result<ErlangTermBuffer, any Error>
 }

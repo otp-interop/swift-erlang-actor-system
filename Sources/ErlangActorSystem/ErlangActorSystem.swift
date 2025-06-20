@@ -8,30 +8,11 @@ import Glibc
 /// An actor system manages an Erlang C node, which can contain many processes
 /// (actors).
 public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendable {
-    /// A description of a message sent over Erlang distribution.
-    public struct Message: Sendable {
-        public let type: MessageType?
-        public let sender: Term.PID
-        public let recipient: Term.PID
-        
-        public enum MessageType: Int, Sendable {
-            case link = 1
-            case send = 2
-            case exit = 3
-            case unlink = 4
-            case nodeLink = 5
-            case registeredSend = 6
-            case groupLeader = 7
-            case exit2 = 8
-            case passThrough = 112 // 'p'
-        }
-    }
-    
-    /// The current message being handled by the actor system.
+    /// Info about the current message being handled by the actor system.
     ///
     /// This value is only set inside of distributed functions/accessors.
     @TaskLocal
-    public static var message: Message?
+    public static var messageInfo: Message.Info?
     
     /// The resolved node name.
     public var name: String {
@@ -50,10 +31,33 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     private let processes = Mutex<[ActorID:any DistributedActor]>([:])
     private(set) var registeredNames = [String:ActorID]()
     
-    private(set) var remoteNodes = [String:RemoteNode]()
+    let remoteNodes = Mutex<[String:(any Transport).AcceptSocket]>([:])
+    private let remoteNodeReceiveLoops = Mutex<[(any Transport).AcceptSocket:Task<Void, Never>]>([:])
+    
     private(set) var nodesMonitors = Set<ActorID>()
-    private func nodeReady(_ node: RemoteNode, name: String) async {
-        self.remoteNodes[name] = node
+    
+    private func nodeReady(_ node: (any Transport).AcceptSocket, name: String) async {
+        self.remoteNodes.withLock {
+            $0[name] = node
+        }
+        self.remoteNodeReceiveLoops.withLock {
+            $0[node] = Task { [weak self] in
+                while true {
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    do {
+                        switch try self.transport.receive(on: node) {
+                        case .tick:
+                            continue
+                        case let .success(message):
+                            try! await self.handleMessage(socket: node, message: message)
+                        }
+                    } catch {
+                        continue
+                    }
+                }
+            }
+        }
         let monitors = self.processes.withLock { processes in
             nodesMonitors.compactMap({ monitor in
                 processes[monitor] as? any NodesMonitor
@@ -71,11 +75,10 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     var acceptTask: Task<(), Never>?
-    var messageTask: Task<(), Never>?
     
     private var registerContinuation: CheckedContinuation<Void, any Error>?
     
-    private var remoteCallContinuations = [RemoteCallContinuation]()
+    private let remoteCallContinuations = Mutex<[RemoteCallContinuation]>([])
     struct RemoteCallContinuation {
         let adapter: any ContinuationAdapter
         let continuation: CheckedContinuation<ErlangTermBuffer, any Error>
@@ -101,16 +104,13 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         
         try? await self.transport.publish(port: port)
         
-        acceptTask = Task.detached { [weak self] in
+        acceptTask = Task { [weak self] in
             while true {
+                guard !Task.isCancelled else { return }
                 guard let self else { continue }
                 guard let (accept, nodeName) = try? await self.transport.accept(from: listen)
                 else { continue }
-                let node = RemoteNode(
-                    socket: accept,
-                    onReceive: handleMessage
-                )
-                await self.nodeReady(node, name: nodeName)
+                await self.nodeReady(accept, name: nodeName)
             }
         }
     }
@@ -135,16 +135,22 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         
         try await self.transport.publish(port: port)
         
-        acceptTask = Task.detached { [weak self] in
+        acceptTask = Task { [weak self] in
             while true {
+                guard !Task.isCancelled else { return }
                 guard let self else { continue }
                 guard let (accept, nodeName) = try? await self.transport.accept(from: listen)
                 else { continue }
-                let node = RemoteNode(
-                    socket: accept,
-                    onReceive: handleMessage
-                )
-                await self.nodeReady(node, name: nodeName)
+                await self.nodeReady(accept, name: nodeName)
+            }
+        }
+    }
+    
+    deinit {
+        self.acceptTask?.cancel()
+        remoteNodeReceiveLoops.withLock {
+            for task in $0.values {
+                task.cancel()
             }
         }
     }
@@ -305,12 +311,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         
         let sender: Term.PID?
         let resultHandlerAdapter: (any ResultHandlerAdapter)?
-        let fileDescriptor: Int32
+        let socket: (any Transport).AcceptSocket
         
-        public init(sender: Term.PID?, resultHandlerAdapter: (any ResultHandlerAdapter)?, fileDescriptor: Int32) {
+        public init(sender: Term.PID?, resultHandlerAdapter: (any ResultHandlerAdapter)?, socket: (any Transport).AcceptSocket) {
             self.sender = sender
             self.resultHandlerAdapter = resultHandlerAdapter
-            self.fileDescriptor = fileDescriptor
+            self.socket = socket
         }
         
         public func onReturn<Success: Codable>(value: Success) async throws {
@@ -327,7 +333,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             let buffer = try resultHandlerAdapter.encode(returning: value)
             
             guard ei_send(
-                fileDescriptor,
+                socket,
                 &senderPID,
                 buffer.buff,
                 buffer.index
@@ -345,7 +351,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             let buffer = try resultHandlerAdapter.encodeVoid()
             
             guard ei_send(
-                fileDescriptor,
+                socket,
                 &senderPID,
                 buffer.buff,
                 buffer.index
@@ -363,7 +369,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             let buffer = try resultHandlerAdapter.encode(throwing: error)
             
             guard ei_send(
-                fileDescriptor,
+                socket,
                 &senderPID,
                 buffer.buff,
                 buffer.index
@@ -411,21 +417,25 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             for: self
         )
         
-        let response = try await withCheckedThrowingContinuation { continuation in
+        let response = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ErlangTermBuffer, any Error>) in
             if let continuationAdapter = remoteCall.continuationAdapter {
-                remoteCallContinuations.append(RemoteCallContinuation(
-                    adapter: continuationAdapter,
-                    continuation: continuation
-                ))
+                remoteCallContinuations.withLock { continuations in
+                    continuations.append(RemoteCallContinuation(
+                        adapter: continuationAdapter,
+                        continuation: continuation
+                    ))
+                }
             }
             
-            do {
-                try self.send(remoteCall.message, to: actor.id)
-            } catch {
-                continuation.resume(throwing: error)
-                return
+            nonisolated(unsafe) let message = remoteCall.message
+            Task { @Sendable in
+                do {
+                    try await self.send(message, to: actor.id)
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
             }
-            
             if remoteCall.continuationAdapter == nil {
                 continuation.resume(returning: ErlangTermBuffer())
             }
@@ -457,17 +467,22 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         
         _ = try await withCheckedThrowingContinuation { continuation in
             if let continuationAdapter = remoteCall.continuationAdapter {
-                remoteCallContinuations.append(RemoteCallContinuation(
-                    adapter: continuationAdapter,
-                    continuation: continuation
-                ))
+                remoteCallContinuations.withLock {
+                    $0.append(RemoteCallContinuation(
+                        adapter: continuationAdapter,
+                        continuation: continuation
+                    ))
+                }
             }
             
-            do {
-                try self.send(remoteCall.message, to: actor.id)
-            } catch {
-                continuation.resume(throwing: error)
-                return
+            nonisolated(unsafe) let message = remoteCall.message
+            Task { @Sendable in
+                do {
+                    try await self.send(message, to: actor.id)
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
             }
             
             if remoteCall.continuationAdapter == nil {
@@ -500,83 +515,48 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
 }
 
 extension ErlangActorSystem {
-    struct RemoteNode {
-        let socket: (any Transport).AcceptSocket
-        let messageTask: Task<(), Never>
-        
-        init(socket: (any Transport).AcceptSocket, onReceive: sending @escaping (Int32, erlang_msg, ErlangTermBuffer) async throws -> ()) {
-            self.socket = socket
-            self.messageTask = Task.detached {
-                while true {
-                    var message = erlang_msg()
-                    let buffer = ErlangTermBuffer()
-                    buffer.new()
-                    
-                    switch ei_xreceive_msg(socket, &message, &buffer.buffer) {
-                    case ERL_TICK:
-                        continue
-                    case ERL_ERROR:
-                        continue
-                    case ERL_MSG:
-                        try! await onReceive(socket, message, buffer)
-                    case let messageKind:
-                        print("=== UNKNOWN MESSAGE KIND \(messageKind) ===")
-                        print(message)
-                        print(buffer)
-                        continue
-                    }
-                }
-            }
-        }
-    }
-    
     /// Establishes a connection between this node and a remote node.
     public func connect(to nodeName: String) async throws {
         let socket = try await self.transport.connect(to: nodeName)
         
-        let connection = RemoteNode(socket: socket, onReceive: handleMessage)
-        
-        await self.nodeReady(connection, name: nodeName)
+        await self.nodeReady(socket, name: nodeName)
     }
     
     /// Establishes a connection between this node and a remote node.
     public func connect(to ip: String, port: Int) async throws {
         let socket = try await self.transport.connect(to: ip, port: port)
         
-        let connection = RemoteNode(socket: socket, onReceive: handleMessage)
-        
-        await self.nodeReady(connection, name: "\(ip):\(port)")
+        await self.nodeReady(socket, name: "\(ip):\(port)")
     }
     
-    func handleMessage(fileDescriptor: Int32, message: erlang_msg, buffer: ErlangTermBuffer) async throws {
-        let recipient = Term.PID(pid: message.to)
-        if recipient == self.pid {
-            switch Int32(message.msgtype) {
-            case ERL_LINK:
+    func handleMessage(socket: (any Transport).AcceptSocket, message: Message) async throws {
+        if message.info.recipient == self.pid {
+            switch message.info.kind {
+            case .link:
                 break
-            case ERL_SEND:
+            case .send:
                 // handle `register` RPC response
                 // {:rex, :yes}
                 if let registerContinuation {
                     var index: Int32 = 0
                     var version: Int32 = 0
-                    buffer.decode(version: &version, index: &index)
+                    message.content.decode(version: &version, index: &index)
                 
                     var arity: Int32 = 0
-                    buffer.decode(tupleHeader: &arity, index: &index)
+                    message.content.decode(tupleHeader: &arity, index: &index)
                     guard arity == 2 else {
                         registerContinuation.resume(throwing: ErlangActorSystemError.registerFailed)
                         return
                     }
                     var atom: [CChar] = [CChar](repeating: 0, count: Int(MAXATOMLEN))
-                    buffer.decode(atom: &atom, index: &index)
+                    message.content.decode(atom: &atom, index: &index)
                     
                     guard String(cString: atom, encoding: .utf8) == "rex" else {
                         registerContinuation.resume(throwing: ErlangActorSystemError.registerFailed)
                         return
                     }
                     atom = [CChar](repeating: 0, count: Int(MAXATOMLEN))
-                    buffer.decode(atom: &atom, index: &index)
+                    message.content.decode(atom: &atom, index: &index)
                     guard String(cString: atom, encoding: .utf8) == "yes" else {
                         registerContinuation.resume(throwing: ErlangActorSystemError.registerFailed)
                         return
@@ -587,31 +567,40 @@ extension ErlangActorSystem {
                 }
                 
                 // match to each awaiting continuation
-                continuationChecks: for (index, continuation) in remoteCallContinuations.enumerated() {
-                    do {
-                        nonisolated(unsafe) let result = try continuation.adapter.decode(buffer)
-                        continuation.continuation.resume(with: result)
-                        remoteCallContinuations.remove(at: index)
-                        break continuationChecks
-                    } catch {
-                        continue
+                func handle(
+                    _ buffer: sending ErlangTermBuffer,
+                    continuations: inout [RemoteCallContinuation]
+                ) {
+                    for (index, continuation) in continuations.enumerated() {
+                        do {
+                            nonisolated(unsafe) let result = try continuation.adapter.decode(buffer)
+                            continuation.continuation.resume(with: result)
+                            continuations.remove(at: index)
+                            return
+                        } catch {
+                            continue
+                        }
                     }
+                }
+                remoteCallContinuations.withLock { remoteCallContinuations in
+                    nonisolated(unsafe) let buffer = message.content
+                    handle(buffer, continuations: &remoteCallContinuations)
                 }
             default:
                 print("=== UNKNOWN ACTOR SYSTEM MESSAGE ===")
-                print(buffer)
+                print(message.content)
             }
-        } else if let actor = self.registeredNames[String(cString: Array(tuple: message.toname, start: \.0), encoding: .utf8)!]
+        } else if let actor = self.registeredNames[message.info.namedRecipient]
             .flatMap({ id in self.processes.withLock({ $0[id] }) })
-                    ?? self.processes.withLock({ $0[.pid(recipient)] })
+                    ?? self.processes.withLock({ $0[.pid(message.info.recipient)] })
         {
             let remoteCallAdapter = (actor as? any HasRemoteCallAdapter)?.remoteCallAdapter ?? self.remoteCallAdapter
-            let localCall = try remoteCallAdapter.decode(buffer, for: self)
+            let localCall = try remoteCallAdapter.decode(message.content, for: self)
             
             let handler = ResultHandler(
                 sender: localCall.sender,
                 resultHandlerAdapter: localCall.resultHandler,
-                fileDescriptor: fileDescriptor
+                socket: socket
             )
             
             let decoder = TermDecoder()
@@ -621,11 +610,7 @@ extension ErlangActorSystem {
                 index: 0
             )
             
-            try! await ErlangActorSystem.$message.withValue(Message(
-                type: Message.MessageType(rawValue: message.msgtype),
-                sender: Term.PID(pid: message.from),
-                recipient: Term.PID(pid: message.to)
-            )) {
+            try! await ErlangActorSystem.$messageInfo.withValue(message.info) {
                 if let stableNamed = actor as? any HasStableNames {
                     try await stableNamed._executeStableName(
                         target: RemoteCallTarget(localCall.identifier),
@@ -643,7 +628,7 @@ extension ErlangActorSystem {
             }
         } else {
             print("=== UNKNOWN ACTOR MESSAGE ===")
-            print(buffer)
+            print(message.content)
         }
     }
 }
@@ -684,24 +669,26 @@ extension ErlangActorSystem {
         processes.withLock({ $0[id] })
     }
     
-    public func send(_ message: ErlangTermBuffer, to id: ActorID) throws {
+    public func send(_ message: sending ErlangTermBuffer, to id: ActorID) async throws {
         if self.processes.withLock({ $0.keys.contains(id) }) {
             fatalError("'send(_:to:)' can only be used with remote actor IDs")
         } else {
             switch id {
             case let .pid(pid):
                 guard let nodeName = String(cString: [CChar](tuple: pid.pid.node, start: \.0), encoding: .utf8),
-                      let node = self.remoteNodes[nodeName]
+                      let node = self.remoteNodes.withLock({ $0[nodeName] })
                 else {
                     throw ErlangActorSystemError.sendFailed
                 }
                 
-                try self.transport.send(message, to: pid, on: node.socket)
+                nonisolated(unsafe) let message = message
+                try await self.transport.send(.init(content: message, recipient: .pid(pid)), on: node)
             case let .name(name, nodeName):
-                guard let node = self.remoteNodes[nodeName]
+                guard let node = self.remoteNodes.withLock({ $0[nodeName] })
                 else { throw ErlangActorSystemError.sendFailed }
                 
-                try self.transport.send(message, to: name, on: node.socket)
+                nonisolated(unsafe) let message = message
+                try await self.transport.send(.init(content: message, recipient: .name(name)), on: node)
             }
         }
     }
