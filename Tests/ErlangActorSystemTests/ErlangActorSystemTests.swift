@@ -10,8 +10,8 @@ import Foundation
         let actorSystem1 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
         let actorSystem2 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
         try await actorSystem1.connect(to: actorSystem2.name)
-        #expect(actorSystem1.remoteNodes.count == 1)
-        #expect(actorSystem2.remoteNodes.count == 1)
+        #expect(actorSystem1.remoteNodes.withLock { $0.count == 1 })
+        #expect(actorSystem2.remoteNodes.withLock { $0.count == 1 })
     }
     
     @Test func remoteCall() async throws {
