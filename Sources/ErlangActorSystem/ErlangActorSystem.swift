@@ -572,12 +572,17 @@ extension ErlangActorSystem {
                     continuations: inout [RemoteCallContinuation]
                 ) {
                     for (index, continuation) in continuations.enumerated() {
-                        do {
-                            nonisolated(unsafe) let result = try continuation.adapter.decode(buffer)
-                            continuation.continuation.resume(with: result)
+                        nonisolated(unsafe) let result = continuation.adapter.decode(buffer)
+                        switch result {
+                        case let .success(result):
+                            continuation.continuation.resume(returning: result)
                             continuations.remove(at: index)
                             return
-                        } catch {
+                        case let .failure(error):
+                            continuation.continuation.resume(throwing: error)
+                            continuations.remove(at: index)
+                            return
+                        case .mismatch:
                             continue
                         }
                     }
@@ -586,6 +591,44 @@ extension ErlangActorSystem {
                     nonisolated(unsafe) let buffer = message.content
                     handle(buffer, continuations: &remoteCallContinuations)
                 }
+//                let matched = Atomic(false)
+//                await withTaskGroup(of: Int?.self) { group in
+//                    remoteCallContinuations.withLock { continuations in
+//                        for (index, continuation) in continuations.enumerated() {
+//                            nonisolated(unsafe) let buffer = message.content
+//                            group.addTask { @Sendable in
+//                                guard !matched.load(ordering: .relaxed) else { return nil }
+//                                
+//                                let result = continuation.adapter.decode(buffer)
+//                                switch result {
+//                                case .success(let buffer):
+//                                    continuation.continuation.resume(returning: buffer)
+//                                    if matched.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
+//                                        return index
+//                                    } else {
+//                                        return nil
+//                                    }
+//                                case .failure(let error):
+//                                    continuation.continuation.resume(throwing: error)
+//                                    if matched.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
+//                                        return index
+//                                    } else {
+//                                        return nil
+//                                    }
+//                                case .mismatch:
+//                                    return nil
+//                                }
+//                            }
+//                        }
+//                    }
+//                    for await match in group {
+//                        guard let match else { continue }
+//                        remoteCallContinuations.withLock {
+//                            _ = $0.remove(at: match)
+//                        }
+//                        return
+//                    }
+//                }
             default:
                 print("=== UNKNOWN ACTOR SYSTEM MESSAGE ===")
                 print(message.content)

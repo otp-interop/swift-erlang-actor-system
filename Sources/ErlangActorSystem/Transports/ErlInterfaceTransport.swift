@@ -26,6 +26,47 @@ public final class ErlInterfaceTransport: Transport {
     
     private let backlog: Int
     
+    private var sockets = [AcceptSocket: Socket]()
+    
+    private actor Socket {
+        let socket: AcceptSocket
+        
+        init(socket: AcceptSocket) {
+            self.socket = socket
+        }
+        
+        func send(
+            _ message: SendMessage,
+            node: ei_cnode
+        ) throws {
+            // making a copy is ok, because `ei_reg_send` only accesses `self`
+            // from the node, and doesn't mutate it.
+            var node = node
+            switch message.recipient {
+            case let .pid(pid):
+                var pid = pid.pid
+                guard ei_send(
+                    socket,
+                    &pid,
+                    message.content.buff,
+                    message.content.buffsz
+                ) >= 0
+                else { throw TransportError.sendFailed }
+            case let .name(name):
+                try name.withCString { name in
+                    guard ei_reg_send(
+                        &node,
+                        socket,
+                        UnsafeMutablePointer(mutating: name),
+                        message.content.buff,
+                        message.content.index
+                    ) >= 0
+                    else { throw ErlangActorSystemError.sendFailed }
+                }
+            }
+        }
+    }
+    
     public init(
         backlog: Int = 5
     ) {
@@ -77,6 +118,9 @@ public final class ErlInterfaceTransport: Transport {
         guard fileDescriptor >= 0,
               let nodeName = String(cString: [CChar](tuple: conn.nodename, start: \.0), encoding: .utf8)
         else { throw TransportError.acceptFailed }
+        
+        self.sockets[fileDescriptor] = Socket(socket: fileDescriptor)
+        
         return (socket: fileDescriptor, name: nodeName)
     }
     
@@ -86,6 +130,9 @@ public final class ErlInterfaceTransport: Transport {
         }
         guard fileDescriptor >= 0
         else { throw TransportError.connectFailed }
+        
+        self.sockets[fileDescriptor] = Socket(socket: fileDescriptor)
+        
         return fileDescriptor
     }
     
@@ -99,33 +146,14 @@ public final class ErlInterfaceTransport: Transport {
         guard fileDescriptor >= 0
         else { throw TransportError.connectFailed }
         
+        self.sockets[fileDescriptor] = Socket(socket: fileDescriptor)
+        
         return fileDescriptor
     }
     
-    @MainActor
     public func send(_ message: SendMessage, on socket: AcceptSocket) async throws {
-        switch message.recipient {
-        case let .pid(pid):
-            var pid = pid.pid
-            guard ei_send(
-                socket,
-                &pid,
-                message.content.buff,
-                message.content.buffsz
-            ) >= 0
-            else { throw TransportError.sendFailed }
-        case let .name(name):
-            try name.withCString { name in
-                guard ei_reg_send(
-                    &self.node,
-                    socket,
-                    UnsafeMutablePointer(mutating: name),
-                    message.content.buff,
-                    message.content.index
-                ) >= 0
-                else { throw ErlangActorSystemError.sendFailed }
-            }
-        }
+        nonisolated(unsafe) let node = self.node
+        try await self.sockets[socket]?.send(message, node: node)
     }
     
     public func receive(on socket: AcceptSocket) throws -> ReceiveResult {

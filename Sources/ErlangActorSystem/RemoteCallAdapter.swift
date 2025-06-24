@@ -80,5 +80,12 @@ public protocol ResultHandlerAdapter {
 }
 
 public protocol ContinuationAdapter: Sendable {
-    func decode(_ message: ErlangTermBuffer) throws -> Result<ErlangTermBuffer, any Error>
+    func decode(_ message: ErlangTermBuffer) -> ContinuationMatch
+    
+}
+
+public enum ContinuationMatch {
+    case success(ErlangTermBuffer)
+    case failure(any Error)
+    case mismatch
 }

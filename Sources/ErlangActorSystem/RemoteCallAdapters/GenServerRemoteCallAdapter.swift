@@ -207,38 +207,45 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
         /// `{<ref>, <result>}`
         public func decode(
             _ message: ErlangTermBuffer
-        ) throws -> Result<ErlangTermBuffer, any Error> {
+        ) -> ContinuationMatch {
             var index: Int32 = 0
             
             var version: Int32 = 0
             message.decode(version: &version, index: &index)
             
             var arity: Int32 = 0
+            guard message.decode(tupleHeader: &arity, index: &index),
+                  arity == 2
+            else { return .mismatch }
+            
+            // [:alias, #Reference]
             var refArity: Int32 = 0
+            guard message.decode(listHeader: &refArity, index: &index),
+                  refArity == 2
+            else { return .mismatch }
+            
+            var aliasTermIndex = index
             var ref = erlang_ref()
-            var atom: [CChar] = [CChar](repeating: 0, count: Int(MAXATOMLEN))
-            if message.decode(tupleHeader: &arity, index: &index),
-               arity > 1,
-               message.decode(listHeader: &refArity, index: &index),
-               refArity == 2,
-               message.decode(atom: &atom, index: &index),
-               String(cString: atom, encoding: .utf8) == "alias",
-               message.decode(ref: &ref, index: &index),
-               message.decode(listHeader: &refArity, index: &index), // tail
-               Term.Reference(ref: ref) == monitorReference
-            {
-                let responseStartIndex = index
-                for _ in 0..<Int(arity - 1) {
-                    message.skipTerm(index: &index)
-                }
-                return .success(message[responseStartIndex...index])
-            } else {
-                throw ContinuationError.unsupportedMessage
+            
+            // #Reference
+            guard message.skipTerm(index: &index),
+                  message.decode(ref: &ref, index: &index),
+                  Term.Reference(ref: ref) == monitorReference
+            else { return .mismatch }
+            
+            // :alias
+            let atom = UnsafeMutablePointer<CChar>.allocate(capacity: Int(MAXATOMLEN))
+            defer { atom.deallocate() }
+            guard message.decode(atom: atom, index: &aliasTermIndex),
+                  memcmp(atom, "alias", 6) == 0, // :alias
+                  message.decode(listHeader: &refArity, index: &index) // tail
+            else { return .mismatch }
+            
+            let responseStartIndex = index
+            for _ in 0..<Int(arity - 1) {
+                message.skipTerm(index: &index)
             }
-        }
-        
-        enum ContinuationError: Error {
-            case unsupportedMessage
+            return .success(message[responseStartIndex...index])
         }
     }
     
