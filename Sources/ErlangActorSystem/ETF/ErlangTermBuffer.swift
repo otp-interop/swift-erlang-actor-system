@@ -51,6 +51,14 @@ public final class ErlangTermBuffer {
         )
         return subBuffer
     }
+    
+    /// Compares the start bytes of this buffer to another buffer with a `memcmp`.
+    ///
+    /// - Warning: This method assumes the `index` of both buffers is at the end of the buffer.
+    func hasPrefix(_ prefix: ErlangTermBuffer) -> Bool {
+        guard buffer.index >= prefix.index else { return false }
+        return memcmp(buffer.buff, prefix.buff, Int(prefix.index)) == 0
+    }
 }
 
 extension ErlangTermBuffer: CustomDebugStringConvertible, CustomStringConvertible {

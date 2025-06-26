@@ -311,11 +311,18 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         
         let sender: Term.PID?
         let resultHandlerAdapter: (any ResultHandlerAdapter)?
+        let transport: any Transport
         let socket: (any Transport).AcceptSocket
         
-        public init(sender: Term.PID?, resultHandlerAdapter: (any ResultHandlerAdapter)?, socket: (any Transport).AcceptSocket) {
+        public init(
+            sender: Term.PID?,
+            resultHandlerAdapter: (any ResultHandlerAdapter)?,
+            transport: (any Transport),
+            socket: (any Transport).AcceptSocket
+        ) {
             self.sender = sender
             self.resultHandlerAdapter = resultHandlerAdapter
+            self.transport = transport
             self.socket = socket
         }
         
@@ -324,21 +331,16 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                   let resultHandlerAdapter
             else { return }
             
-            var senderPID = sender.pid
-            
             let encoder = TermEncoder()
             encoder.includeVersion = false
             let value = try encoder.encode(value)
             
             let buffer = try resultHandlerAdapter.encode(returning: value)
             
-            guard ei_send(
-                socket,
-                &senderPID,
-                buffer.buff,
-                buffer.index
-            ) == 0
-            else { throw ErlangActorSystemError.sendFailed }
+            try await transport.send(
+                .init(content: buffer, recipient: .pid(sender)),
+                on: socket
+            )
         }
         
         public func onReturnVoid() async throws {
@@ -346,17 +348,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                   let resultHandlerAdapter
             else { return }
             
-            var senderPID = sender.pid
-            
             let buffer = try resultHandlerAdapter.encodeVoid()
             
-            guard ei_send(
-                socket,
-                &senderPID,
-                buffer.buff,
-                buffer.index
-            ) == 0
-            else { throw ErlangActorSystemError.sendFailed }
+            try await transport.send(
+                .init(content: buffer, recipient: .pid(sender)),
+                on: socket
+            )
         }
         
         public func onThrow<Err>(error: Err) async throws where Err : Error {
@@ -643,6 +640,7 @@ extension ErlangActorSystem {
             let handler = ResultHandler(
                 sender: localCall.sender,
                 resultHandlerAdapter: localCall.resultHandler,
+                transport: transport,
                 socket: socket
             )
             

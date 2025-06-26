@@ -201,51 +201,29 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
         }
     }
     
-    private struct CallContinuation: ContinuationAdapter {
-        let monitorReference: Term.Reference
+    private struct CallContinuation: ContinuationAdapter, @unchecked Sendable {
+        let expectedPrefix: ErlangTermBuffer
+        
+        init(monitorReference: Term.Reference) {
+            self.expectedPrefix = .init()
+            self.expectedPrefix.newWithVersion()
+            self.expectedPrefix.encode(tupleHeader: 2) // {<ref>, <result>}
+            self.expectedPrefix.encode(listHeader: 2) // [:alias, #Reference]
+            "alias".withCString {
+                _ = self.expectedPrefix.encode(atom: $0)
+            }
+            var ref = monitorReference.ref
+            self.expectedPrefix.encode(ref: &ref)
+            self.expectedPrefix.encodeEmptyList()
+        }
         
         /// `{<ref>, <result>}`
         public func decode(
             _ message: ErlangTermBuffer
         ) -> ContinuationMatch {
-            var index: Int32 = 0
-            
-            var version: Int32 = 0
-            message.decode(version: &version, index: &index)
-            
-            var arity: Int32 = 0
-            guard message.decode(tupleHeader: &arity, index: &index),
-                  arity == 2
+            guard message.hasPrefix(expectedPrefix)
             else { return .mismatch }
-            
-            // [:alias, #Reference]
-            var refArity: Int32 = 0
-            guard message.decode(listHeader: &refArity, index: &index),
-                  refArity == 2
-            else { return .mismatch }
-            
-            var aliasTermIndex = index
-            var ref = erlang_ref()
-            
-            // #Reference
-            guard message.skipTerm(index: &index),
-                  message.decode(ref: &ref, index: &index),
-                  Term.Reference(ref: ref) == monitorReference
-            else { return .mismatch }
-            
-            // :alias
-            let atom = UnsafeMutablePointer<CChar>.allocate(capacity: Int(MAXATOMLEN))
-            defer { atom.deallocate() }
-            guard message.decode(atom: atom, index: &aliasTermIndex),
-                  memcmp(atom, "alias", 6) == 0, // :alias
-                  message.decode(listHeader: &refArity, index: &index) // tail
-            else { return .mismatch }
-            
-            let responseStartIndex = index
-            for _ in 0..<Int(arity - 1) {
-                message.skipTerm(index: &index)
-            }
-            return .success(message[responseStartIndex...index])
+            return .success(message[expectedPrefix.index...])
         }
     }
     

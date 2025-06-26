@@ -28,7 +28,7 @@ public protocol Transport {
     
     mutating func connect(to ipAddress: String, port: Int) async throws -> AcceptSocket
     
-    mutating func send(_ message: SendMessage, on socket: AcceptSocket) async throws
+    func send(_ message: SendMessage, on socket: AcceptSocket) async throws
     
     func receive(on socket: AcceptSocket) throws -> ReceiveResult
     
