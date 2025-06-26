@@ -18,6 +18,12 @@ import Foundation
 public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
     let dispatcher: any Dispatcher
     
+    nonisolated(unsafe) static let termEncoder = {
+        let encoder = TermEncoder()
+        encoder.includeVersion = false
+        return encoder
+    }()
+    
     public init(_ dispatcher: any Dispatcher = .castVoid) {
         self.dispatcher = dispatcher
     }
@@ -51,10 +57,8 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
                 message.encode(tupleHeader: invocation.arguments.count + 1) // {:target, args...}
                 message.encode(atom: invocation.identifier)
                 
-                let encoder = TermEncoder()
-                encoder.includeVersion = false
                 for argument in invocation.arguments {
-                    message.append(try encoder.encode(argument.value))
+                    message.append(try Self.termEncoder.encode(argument.value))
                 }
             }
             
@@ -73,10 +77,8 @@ public struct GenServerRemoteCallAdapter: RemoteCallAdapter {
                 message.encode(tupleHeader: invocation.arguments.count + 1) // {:target, args...}
                 message.encode(atom: invocation.identifier)
                 
-                let encoder = TermEncoder()
-                encoder.includeVersion = false
                 for argument in invocation.arguments {
-                    message.append(try encoder.encode(argument.value))
+                    message.append(try Self.termEncoder.encode(argument.value))
                 }
             }
             

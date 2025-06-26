@@ -75,6 +75,12 @@ public distributed actor ProcessGroups: HasRemoteCallAdapter {
     public struct RemoteCallAdapterType: RemoteCallAdapter {
         let genServer = GenServerRemoteCallAdapter(Dispatcher())
         
+        nonisolated(unsafe) static let termEncoder = {
+            let encoder = TermEncoder()
+            encoder.includeVersion = false
+            return encoder
+        }()
+        
         struct Dispatcher: GenServerRemoteCallAdapter.Dispatcher {
             func dispatch(
                 _ invocation: GenServerRemoteCallAdapter.RemoteCallInvocation
@@ -102,10 +108,8 @@ public distributed actor ProcessGroups: HasRemoteCallAdapter {
                     message.encode(tupleHeader: invocation.arguments.count + 1)
                     message.encode(atom: invocation.identifier)
                     
-                    let encoder = TermEncoder()
-                    encoder.includeVersion = false
                     for argument in invocation.arguments {
-                        message.append(try encoder.encode(argument.value))
+                        message.append(try Self.termEncoder.encode(argument.value))
                     }
                 }
                 return EncodedRemoteCall(

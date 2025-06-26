@@ -16,6 +16,12 @@ import CErlInterface
 /// :<target>
 /// ```
 public struct PrimitiveRemoteCallAdapter: RemoteCallAdapter {
+    nonisolated(unsafe) static let termEncoder = {
+        let encoder = TermEncoder()
+        encoder.includeVersion = false
+        return encoder
+    }()
+    
     public init() {}
     
     public func encode(
@@ -31,10 +37,8 @@ public struct PrimitiveRemoteCallAdapter: RemoteCallAdapter {
             message.encode(tupleHeader: invocation.arguments.count + 1) // {:target, args...}
             message.encode(atom: invocation.identifier)
             
-            let encoder = TermEncoder()
-            encoder.includeVersion = false
             for argument in invocation.arguments {
-                message.append(try encoder.encode(argument.value))
+                message.append(try Self.termEncoder.encode(argument.value))
             }
         }
         

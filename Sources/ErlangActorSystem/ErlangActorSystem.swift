@@ -87,6 +87,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     /// The ``RemoteCallAdapter`` to use for actors that don't specify their own.
     public let remoteCallAdapter: any RemoteCallAdapter
     
+    nonisolated(unsafe) static let termEncoder = {
+        let encoder = TermEncoder()
+        encoder.includeVersion = false
+        return encoder
+    }()
+    
     /// Create an actor system with a short node name.
     public init(
         name: String,
@@ -248,12 +254,9 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     public struct InvocationEncoder: DistributedTargetInvocationEncoder {
         public typealias SerializationRequirement = any Codable
         
-        let encoder: TermEncoder
         private(set) var arguments = [RemoteCallArgument<any Codable>]()
         
-        init(encoder: TermEncoder) {
-            self.encoder = encoder
-        }
+        init() {}
         
         public mutating func recordArgument<Value: Codable>(_ argument: RemoteCallArgument<Value>) throws {
             arguments.append(RemoteCallArgument(
@@ -331,9 +334,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                   let resultHandlerAdapter
             else { return }
             
-            let encoder = TermEncoder()
-            encoder.includeVersion = false
-            let value = try encoder.encode(value)
+            let value = try ErlangActorSystem.termEncoder.encode(value)
             
             let buffer = try resultHandlerAdapter.encode(returning: value)
             
@@ -500,9 +501,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     }
     
     public func makeInvocationEncoder() -> InvocationEncoder {
-        let encoder = TermEncoder()
-        encoder.includeVersion = false
-        return InvocationEncoder(encoder: encoder)
+        return InvocationEncoder()
     }
 }
 

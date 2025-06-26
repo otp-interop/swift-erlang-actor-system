@@ -31,5 +31,5 @@ receive do
 end
 receive do
     ping_time ->
-        IO.puts "ping #{n} actors took #{ping_time / 1_000_000} seconds"
+        IO.puts "ping #{n} remote actors took #{ping_time / 1_000_000} seconds"
 end
