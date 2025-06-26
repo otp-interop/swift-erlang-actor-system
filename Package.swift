@@ -5,7 +5,7 @@ import PackageDescription
 import CompilerPluginSupport
 
 let package = Package(
-    name: "ErlangActorSystem",
+    name: "swift-erlang-actor-system",
     platforms: [.iOS(.v18), .macOS(.v15)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
@@ -15,7 +15,6 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "600.0.1"),
-        .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.2.1")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.

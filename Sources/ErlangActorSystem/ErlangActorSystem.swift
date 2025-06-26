@@ -81,7 +81,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     private let remoteCallContinuations = Mutex<[RemoteCallContinuation]>([])
     struct RemoteCallContinuation {
         let adapter: any ContinuationAdapter
-        let continuation: CheckedContinuation<ErlangTermBuffer, any Error>
+        let continuation: UnsafeContinuation<ErlangTermBuffer, any Error>
     }
     
     /// The ``RemoteCallAdapter`` to use for actors that don't specify their own.
@@ -361,17 +361,12 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
                   let resultHandlerAdapter
             else { return }
             
-            var senderPID = sender.pid
-            
             let buffer = try resultHandlerAdapter.encode(throwing: error)
             
-            guard ei_send(
-                socket,
-                &senderPID,
-                buffer.buff,
-                buffer.index
-            ) == 0
-            else { throw ErlangActorSystemError.sendFailed }
+            try await transport.send(
+                .init(content: buffer, recipient: .pid(sender)),
+                on: socket
+            )
         }
     }
     
@@ -414,13 +409,13 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             for: self
         )
         
-        let response = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ErlangTermBuffer, any Error>) in
+        let response = try await withUnsafeThrowingContinuation { (continuation: UnsafeContinuation<ErlangTermBuffer, any Error>) in
             if let continuationAdapter = remoteCall.continuationAdapter {
                 remoteCallContinuations.withLock { continuations in
-                    continuations.append(RemoteCallContinuation(
+                    continuations.insert(RemoteCallContinuation(
                         adapter: continuationAdapter,
                         continuation: continuation
-                    ))
+                    ), at: 0)
                 }
             }
             
@@ -462,13 +457,13 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
             for: self
         )
         
-        _ = try await withCheckedThrowingContinuation { continuation in
+        _ = try await withUnsafeThrowingContinuation { continuation in
             if let continuationAdapter = remoteCall.continuationAdapter {
                 remoteCallContinuations.withLock {
-                    $0.append(RemoteCallContinuation(
+                    $0.insert(RemoteCallContinuation(
                         adapter: continuationAdapter,
                         continuation: continuation
-                    ))
+                    ), at: 0)
                 }
             }
             
@@ -568,7 +563,8 @@ extension ErlangActorSystem {
                     _ buffer: sending ErlangTermBuffer,
                     continuations: inout [RemoteCallContinuation]
                 ) {
-                    for (index, continuation) in continuations.enumerated() {
+                    for index in (continuations.startIndex..<continuations.endIndex).reversed() {
+                        let continuation = continuations[index]
                         nonisolated(unsafe) let result = continuation.adapter.decode(buffer)
                         switch result {
                         case let .success(result):
@@ -588,44 +584,6 @@ extension ErlangActorSystem {
                     nonisolated(unsafe) let buffer = message.content
                     handle(buffer, continuations: &remoteCallContinuations)
                 }
-//                let matched = Atomic(false)
-//                await withTaskGroup(of: Int?.self) { group in
-//                    remoteCallContinuations.withLock { continuations in
-//                        for (index, continuation) in continuations.enumerated() {
-//                            nonisolated(unsafe) let buffer = message.content
-//                            group.addTask { @Sendable in
-//                                guard !matched.load(ordering: .relaxed) else { return nil }
-//                                
-//                                let result = continuation.adapter.decode(buffer)
-//                                switch result {
-//                                case .success(let buffer):
-//                                    continuation.continuation.resume(returning: buffer)
-//                                    if matched.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
-//                                        return index
-//                                    } else {
-//                                        return nil
-//                                    }
-//                                case .failure(let error):
-//                                    continuation.continuation.resume(throwing: error)
-//                                    if matched.compareExchange(expected: false, desired: true, ordering: .relaxed).exchanged {
-//                                        return index
-//                                    } else {
-//                                        return nil
-//                                    }
-//                                case .mismatch:
-//                                    return nil
-//                                }
-//                            }
-//                        }
-//                    }
-//                    for await match in group {
-//                        guard let match else { continue }
-//                        remoteCallContinuations.withLock {
-//                            _ = $0.remove(at: match)
-//                        }
-//                        return
-//                    }
-//                }
             default:
                 print("=== UNKNOWN ACTOR SYSTEM MESSAGE ===")
                 print(message.content)
