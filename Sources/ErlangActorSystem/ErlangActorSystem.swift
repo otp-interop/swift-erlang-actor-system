@@ -78,7 +78,7 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
     
     private var registerContinuation: CheckedContinuation<Void, any Error>?
     
-    private let remoteCallContinuations = Mutex<[RemoteCallContinuation]>([])
+    private let remoteCallContinuations = Mutex<LinkedList<RemoteCallContinuation>>(.init())
     struct RemoteCallContinuation {
         let adapter: any ContinuationAdapter
         let continuation: UnsafeContinuation<ErlangTermBuffer, any Error>
@@ -412,10 +412,10 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         let response = try await withUnsafeThrowingContinuation { (continuation: UnsafeContinuation<ErlangTermBuffer, any Error>) in
             if let continuationAdapter = remoteCall.continuationAdapter {
                 remoteCallContinuations.withLock { continuations in
-                    continuations.insert(RemoteCallContinuation(
+                    continuations.append(RemoteCallContinuation(
                         adapter: continuationAdapter,
                         continuation: continuation
-                    ), at: 0)
+                    ))
                 }
             }
             
@@ -460,10 +460,10 @@ public final class ErlangActorSystem: DistributedActorSystem, @unchecked Sendabl
         _ = try await withUnsafeThrowingContinuation { continuation in
             if let continuationAdapter = remoteCall.continuationAdapter {
                 remoteCallContinuations.withLock {
-                    $0.insert(RemoteCallContinuation(
+                    $0.append(RemoteCallContinuation(
                         adapter: continuationAdapter,
                         continuation: continuation
-                    ), at: 0)
+                    ))
                 }
             }
             
@@ -561,19 +561,18 @@ extension ErlangActorSystem {
                 // match to each awaiting continuation
                 func handle(
                     _ buffer: sending ErlangTermBuffer,
-                    continuations: inout [RemoteCallContinuation]
+                    continuations: inout LinkedList<RemoteCallContinuation>
                 ) {
-                    for index in (continuations.startIndex..<continuations.endIndex).reversed() {
-                        let continuation = continuations[index]
-                        nonisolated(unsafe) let result = continuation.adapter.decode(buffer)
+                    for node in continuations {
+                        nonisolated(unsafe) let result = node.value.adapter.decode(buffer)
                         switch result {
                         case let .success(result):
-                            continuation.continuation.resume(returning: result)
-                            continuations.remove(at: index)
+                            node.value.continuation.resume(returning: result)
+                            continuations.remove(node)
                             return
                         case let .failure(error):
-                            continuation.continuation.resume(throwing: error)
-                            continuations.remove(at: index)
+                            node.value.continuation.resume(throwing: error)
+                            continuations.remove(node)
                             return
                         case .mismatch:
                             continue
