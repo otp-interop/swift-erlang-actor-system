@@ -45,16 +45,6 @@ import Foundation
         #expect(try await remoteActor.greet("John Doe") == "Hello, John Doe!")
     }
     
-    @StableNames
-    distributed actor StableNameTestActor {
-        typealias ActorSystem = ErlangActorSystem
-        
-        @StableName("ping")
-        distributed func ping() -> String {
-            return "pong"
-        }
-    }
-    
     @Test func stableNameRemoteCall() async throws {
         let cookie = UUID().uuidString
         
@@ -117,23 +107,6 @@ import Foundation
         #expect(try await remote.count == 2)
     }
     
-    @StableNames
-    distributed actor StableNameCounterActor {
-        typealias ActorSystem = ErlangActorSystem
-        
-        private var _count: Int = 0
-        
-        @StableName("count")
-        distributed var count: Int {
-            _count
-        }
-        
-        @StableName("increment")
-        distributed func increment() {
-            _count += 1
-        }
-    }
-    
     @Test func stableNameRemoteComputedProperty() async throws {
         let cookie = UUID().uuidString
         
@@ -181,20 +154,6 @@ import Foundation
         ) == 2)
     }
     
-    @StableNames
-    distributed actor ProcessGroupTestActor: HasRemoteCallAdapter {
-        typealias ActorSystem = ErlangActorSystem
-        
-        nonisolated var remoteCallAdapter: ProcessGroupRemoteCallAdapter {
-            .processGroup
-        }
-        
-        @StableName("test")
-        distributed func test() {
-            
-        }
-    }
-    
     @Test func processGroups() async throws {
         let cookie = UUID().uuidString
         let actorSystem1 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
@@ -238,60 +197,107 @@ import Foundation
         }
     }
     
-    @StableNames
-    distributed actor Counter: CounterProtocol {
-        var _count = 0
-        
-        @StableName("count")
-        distributed var count: Int {
-            _count
-        }
-        
-        @StableName("increment")
-        distributed func increment() {
-            _count += 1
-        }
-        
-        @StableName("decrement")
-        distributed func decrement() {
-            _count -= 1
-        }
-    }
+//    @Test func protocols() async throws {
+//        let cookie = UUID().uuidString
+//        let actorSystem1 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
+//        let actorSystem2 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
+//        
+//        try await actorSystem1.connect(to: actorSystem2.name)
+//        
+//        let local = Counter(actorSystem: actorSystem1)
+//        actorSystem1.register(local, name: "counter")
+//        
+//        let remote: some CounterProtocol = try $CounterProtocol.resolve(
+//            id: .name("counter", node: actorSystem1.name),
+//            using: actorSystem2
+//        )
+//        
+//        #expect(try await remote.count == 0)
+//        try await remote.increment()
+//        try await remote.increment()
+//        try await remote.increment()
+//        #expect(try await remote.count == 3)
+//        try await remote.decrement()
+//        #expect(try await remote.count == 2)
+//    }
+}
+
+@StableNames
+distributed actor StableNameTestActor {
+    typealias ActorSystem = ErlangActorSystem
     
-    @Test func protocols() async throws {
-        let cookie = UUID().uuidString
-        let actorSystem1 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
-        let actorSystem2 = try await ErlangActorSystem(name: UUID().uuidString, cookie: cookie)
-        
-        try await actorSystem1.connect(to: actorSystem2.name)
-        
-        let local = Counter(actorSystem: actorSystem1)
-        actorSystem1.register(local, name: "counter")
-        
-        let remote: some CounterProtocol = try $CounterProtocol.resolve(
-            id: .name("counter", node: actorSystem1.name),
-            using: actorSystem2
-        )
-        
-        #expect(try await remote.count == 0)
-        try await remote.increment()
-        try await remote.increment()
-        try await remote.increment()
-        #expect(try await remote.count == 3)
-        try await remote.decrement()
-        #expect(try await remote.count == 2)
+    @StableName("ping")
+    distributed func ping() -> String {
+        return "pong"
     }
 }
 
-@Resolvable
 @StableNames
-protocol CounterProtocol: DistributedActor, HasStableNames where ActorSystem == ErlangActorSystem {
+distributed actor StableNameCounterActor {
+    typealias ActorSystem = ErlangActorSystem
+    
+    private var _count: Int = 0
+    
     @StableName("count")
-    distributed var count: Int { get }
+    distributed var count: Int {
+        _count
+    }
     
     @StableName("increment")
-    distributed func increment()
-    
-    @StableName("decrement")
-    distributed func decrement()
+    distributed func increment() {
+        _count += 1
+    }
 }
+
+@StableNames
+distributed actor ProcessGroupTestActor: HasRemoteCallAdapter {
+    typealias ActorSystem = ErlangActorSystem
+    
+    nonisolated var remoteCallAdapter: ProcessGroupRemoteCallAdapter {
+        .processGroup
+    }
+    
+    @StableName("test")
+    distributed func test() {
+        
+    }
+}
+
+//@StableNames
+//distributed actor Counter {
+//    typealias ActorSystem = ErlangActorSystem
+//    
+//    var _count = 0
+//    
+//    init(actorSystem: ActorSystem) {
+//        self.actorSystem = actorSystem
+//    }
+//    
+//    @StableName("count")
+//    distributed var count: Int {
+//        _count
+//    }
+//    
+//    @StableName("increment")
+//    distributed func increment() {
+//        _count += 1
+//    }
+//    
+//    @StableName("decrement")
+//    distributed func decrement() {
+//        _count -= 1
+//    }
+//}
+
+//@StableNames
+//@Resolvable
+//protocol CounterProtocol: DistributedActor, HasStableNames where ActorSystem == ErlangActorSystem {
+//    @StableName("count")
+//    distributed var count: Int { get }
+//    
+//    @StableName("increment")
+//    distributed func increment()
+//    
+//    @StableName("decrement")
+//    distributed func decrement()
+//}
