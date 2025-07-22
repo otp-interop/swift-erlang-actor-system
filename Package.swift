@@ -45,7 +45,8 @@ let package = Package(
             dependencies: [
                 "ErlangActorSystem"
             ],
-            path: "Tests/ErlangActorSystemBenchmarks"
+            path: "Tests/ErlangActorSystemBenchmarks",
+            exclude: ["benchmark.exs", "node_b.exs"]
         ),
 
         .target(
