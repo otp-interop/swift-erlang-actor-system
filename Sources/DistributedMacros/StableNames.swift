@@ -122,31 +122,35 @@ public struct StableNames: ExtensionMacro, PeerMacro {
                     )
                 ),
                 accessorBlock: AccessorBlockSyntax(accessors: .getter(CodeBlockItemListSyntax {
-                    DictionaryExprSyntax(content: .elements(DictionaryElementListSyntax {
-                        for (decl, stableName, _) in stableNamed {
-                            switch decl {
-                            case let .function(functionDecl):
-                                DictionaryElementSyntax(
-                                    key: StringLiteralExprSyntax(content: functionDecl.functionFullName),
-                                    value: stableName
-                                )
-                            case let .variable(variableDecl):
-                                DictionaryElementSyntax(
-                                    key: StringLiteralExprSyntax(
-                                        content: variableDecl
-                                            .bindings
-                                            .first!
-                                            .pattern
-                                            .as(IdentifierPatternSyntax.self)!
-                                            .identifier
-                                            .text
+                    if stableNamed.isEmpty {
+                        DictionaryExprSyntax(content: .colon(.colonToken()))
+                    } else {
+                        DictionaryExprSyntax(content: .elements(DictionaryElementListSyntax {
+                            for (decl, stableName, _) in stableNamed {
+                                switch decl {
+                                case let .function(functionDecl):
+                                    DictionaryElementSyntax(
+                                        key: StringLiteralExprSyntax(content: functionDecl.functionFullName),
+                                        value: stableName
+                                    )
+                                case let .variable(variableDecl):
+                                    DictionaryElementSyntax(
+                                        key: StringLiteralExprSyntax(
+                                            content: variableDecl
+                                                .bindings
+                                                .first!
+                                                .pattern
+                                                .as(IdentifierPatternSyntax.self)!
+                                                .identifier
+                                                .text
                                             + "()"
-                                    ),
-                                    value: stableName
-                                )
+                                        ),
+                                        value: stableName
+                                    )
+                                }
                             }
-                        }
-                    }))
+                        }))
+                    }
                 }))
             )
         }
