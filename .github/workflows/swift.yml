@@ -28,5 +28,4 @@ jobs:
       - name: Run ETF tests
         run: swift test --filter ErlangActorSystemTests.ETFTests.
       - name: Run ErlangActorSystem tests
-        # isolate test runs to avoid deadlocks
-        run: swift test list -Xswiftc -Xfrontend -Xswiftc -validate-tbd-against-ir=none | grep ErlangActorSystemTests.ErlangActorSystemTests. | xargs -n 1 swift test -Xswiftc -Xfrontend -Xswiftc -validate-tbd-against-ir=none --filter
+        run: swift test --filter ErlangActorSystemTests.ErlangActorSystemTests.
